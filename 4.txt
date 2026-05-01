@@ -1,0 +1,2038 @@
+//@version=5
+indicator("ALFA Esemti v6.4 - Clean Slate", shorttitle="ALFA SMT", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=50)
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 1: AYARLAR (HEPSİ VARSAYILAN OLARAK KAPALI)
+// ═══════════════════════════════════════════════════════════
+grp1 = "⚙️ Swing ve Hafıza"
+leftBars    = input.int(1,   "Sol Mum",   group=grp1, minval=1)
+rightBars   = input.int(1,   "Sağ Mum",   group=grp1, minval=1)
+maxPivots   = input.int(30,  "Maks. Pivot Hafızası",   group=grp1, minval=5)
+maxBarsBack = input.int(300, "Maks. Pivot Yaşı (bar)", group=grp1, minval=50)
+
+grp2 = "🔗 Karşılaştırma Pariteleri"
+use1 = input.bool(false, "", inline="p1", group=grp2)
+sym1 = input.symbol("OANDA:XAGUSD", "Parite 1", inline="p1", group=grp2)
+use2 = input.bool(false, "", inline="p2", group=grp2)
+sym2 = input.symbol("OANDA:XAUCHF", "Parite 2", inline="p2", group=grp2)
+use3 = input.bool(false, "", inline="p3", group=grp2)
+sym3 = input.symbol("OANDA:XAUAUD", "Parite 3", inline="p3", group=grp2)
+use4 = input.bool(false, "", inline="p4", group=grp2)
+sym4 = input.symbol("OANDA:XAUCAD", "Parite 4", inline="p4", group=grp2)
+use5 = input.bool(false, "", inline="p5", group=grp2)
+sym5 = input.symbol("OANDA:XAUSGD", "Parite 5", inline="p5", group=grp2)
+use6 = input.bool(false, "", inline="p6", group=grp2)
+sym6 = input.symbol("OANDA:XAUEUR", "Parite 6", inline="p6", group=grp2)
+use7 = input.bool(false, "", inline="p7", group=grp2)
+sym7 = input.symbol("OANDA:XAUGBP", "Parite 7", inline="p7", group=grp2)
+
+grp3 = "🔧 Görünüm"
+showFailed      = input.bool(false, "Bozulmuş SMT'leri Göster", group=grp3)
+maxSmtLines     = input.int(3, "Aktif SMT Sayısı", group=grp3, minval=1, maxval=100)
+labelOffset     = input.float(0.25, "Etiket Uzaklığı", group=grp3, step=0.05)
+showSmtLabels   = input.bool(true,  "SMT Etiketleri (BULL/BEAR)", group=grp3)
+showLiveLine    = input.bool(true,  "SMT Canlı Oluşum Çizgisi", group=grp3)
+
+grp_ms = "📊 Market Yapısı (ZigZag MTF)"
+showMS          = input.bool(false, "Market Yapısını Göster", group=grp_ms)
+msMode          = input.string("Tek Katman", "Yapı Modu", options=["Tek Katman", "Çift Katman", "Üçlü Katman"], group=grp_ms)
+msTF_main       = input.timeframe("15", "Ana TF", inline="t1", group=grp_ms)
+zzPrd_main      = input.int(2, "Periyod", inline="t1", group=grp_ms, minval=1, maxval=10)
+msTF_sub        = input.timeframe("5",  "Orta TF", inline="t2", group=grp_ms)
+zzPrd_sub       = input.int(2, "Periyod", inline="t2", group=grp_ms, minval=1, maxval=10)
+msTF_minor      = input.timeframe("1",  "Minör TF", inline="t3", group=grp_ms)
+zzPrd_minor     = input.int(2, "Periyod", inline="t3", group=grp_ms, minval=1, maxval=10)
+showSwingLabels = input.bool(false, "HH/HL/LH/LL Etiketleri",  inline="ms_lbl", group=grp_ms)
+showBosChochLabels = input.bool(false, "BOS/CHoCH Etiketleri",  inline="ms_lbl", group=grp_ms)
+showZigzag      = input.bool(false, "Swing Çizgileri", group=grp_ms)
+showBosChoch    = input.bool(false, "BOS/CHoCH", group=grp_ms)
+bosConf         = input.string("Close", "BOS Onayı", options=["Close", "Wick"], group=grp_ms)
+msFilterSMT     = input.bool(false, "Trend Filtresi", group=grp_ms)
+
+grp_qml = "🦅 SMT QML Scanner"
+showQmlMain     = input.bool(true,  "Göster (Ana TF)", group=grp_qml)
+showQmlSub      = input.bool(false, "Göster (Orta TF)", group=grp_qml)
+showQmlMinor    = input.bool(false, "Göster (Minör TF)", group=grp_qml)
+showQmlStructure = input.bool(true, "QML İç Yapısını Çiz (LS, H, CHoCH)", group=grp_qml)
+qmlShoulderProtect = input.int(20, "Omuz Koruma Alanı (Bar)", group=grp_qml, minval=0, tooltip="0 kapatır. Aynı yönde iç içe QML oluşumunu engeller.")
+qmlMitigate     = input.bool(true, "Tetiklenen QML Uzamayı Keser", group=grp_qml)
+qmlInvalidate   = input.bool(true, "Head Kırılınca QML Silinir", group=grp_qml)
+
+// QML V3: Tarihsel Pivot Sweep
+qmlHistEnabled  = input.bool(true, "Tarihsel Likidite QML (V3)", group=grp_qml, tooltip="Geçmişteki tepe/dip seviyeleri süpürüldüğünde tetiklenen ek QML motoru.")
+qmlHistPivotLen = input.int(10, "Tarihsel Pivot Uzunluğu (L/R)", group=grp_qml, minval=3, maxval=50)
+
+// MANUEL FIBLER
+grp_fib_man = "📐 Fibonacci (MANUEL ÇİZİM)"
+fibMan1Show     = input.bool(false, "Manuel FIB 1", group=grp_fib_man)
+fm1_t1 = input.time(0, "Zaman", confirm=true, inline="fm11", group=grp_fib_man)
+fm1_p1 = input.price(0, "Fiyat", confirm=true, inline="fm11", group=grp_fib_man)
+fm1_t2 = input.time(0, "Zaman", confirm=true, inline="fm12", group=grp_fib_man)
+fm1_p2 = input.price(0, "Fiyat", confirm=true, inline="fm12", group=grp_fib_man)
+
+fibMan2Show     = input.bool(false, "Manuel FIB 2", group=grp_fib_man)
+fm2_t1 = input.time(0, "Zaman", confirm=true, inline="fm21", group=grp_fib_man)
+fm2_p1 = input.price(0, "Fiyat", confirm=true, inline="fm21", group=grp_fib_man)
+fm2_t2 = input.time(0, "Zaman", confirm=true, inline="fm22", group=grp_fib_man)
+fm2_p2 = input.price(0, "Fiyat", confirm=true, inline="fm22", group=grp_fib_man)
+
+fibMan3Show     = input.bool(false, "Manuel FIB 3", group=grp_fib_man)
+fm3_t1 = input.time(0, "Zaman", confirm=true, inline="fm31", group=grp_fib_man)
+fm3_p1 = input.price(0, "Fiyat", confirm=true, inline="fm31", group=grp_fib_man)
+fm3_t2 = input.time(0, "Zaman", confirm=true, inline="fm32", group=grp_fib_man)
+fm3_p2 = input.price(0, "Fiyat", confirm=true, inline="fm32", group=grp_fib_man)
+
+// OTOMATIK FIBLER
+grp_fib_auto = "📐 Fibonacci (OTOMATİK MS BAĞLI)"
+fibAutoMainShow = input.bool(false, "Auto FIB (Ana TF)", group=grp_fib_auto)
+fibAutoSubShow  = input.bool(false, "Auto FIB (Orta TF)", group=grp_fib_auto)
+fibAuto1mShow   = input.bool(false, "Auto FIB (Minör TF)", group=grp_fib_auto)
+fibShowBroken   = input.bool(true,  "Önceki Trend Fibleri", group=grp_fib_auto)
+
+grp_fib_st = "📐 Fibonacci Stili & Filtresi"
+fibFilter       = input.string("Kapalı", "Fib. Filtresi", options=["Kapalı", "Premium/Discount", "OTE Bölgesi"], group=grp_fib_st)
+
+// ─── Trend Çizgisi ──────────────────────────────────────────
+fibShowTrend    = input.bool(false, "Trend Çizgisi",       inline="ft1", group=grp_fib_st)
+fibTrendColor   = input.color(color.rgb(128,128,128), "", inline="ft1", group=grp_fib_st)
+
+// ─── Seviye Çizgileri ───────────────────────────────────────
+fibLineStyle    = input.string("Noktalı", "Seviye Çizgi Tipi", options=["Düz", "Kesikli", "Noktalı"], group=grp_fib_st)
+fibExtend       = input.string("Yok", "Uzat (Extend)", options=["Yok", "Sağa", "İki Yöne"], group=grp_fib_st)
+
+// ─── Yön Renklendirme ───────────────────────────────────────
+fibUseDirColor  = input.bool(true, "Yön Rengi Kullan",    inline="fdc", group=grp_fib_st)
+fibBullColor    = input.color(color.rgb(38, 166, 91),  "Yükseliş", inline="fdc", group=grp_fib_st)
+fibBearColor    = input.color(color.rgb(220, 50, 50),  "Düşüş",    inline="fdc", group=grp_fib_st)
+
+// ─── Arka Plan (Background) ─────────────────────────────────
+fibShowBg       = input.bool(false, "Arka Plan (Background)", inline="fbg", group=grp_fib_st)
+fibBgAlpha      = input.int(85, "", inline="fbg", group=grp_fib_st, minval=50, maxval=98)
+
+// ─── Diğer Seçenekler ───────────────────────────────────────
+fibReverse      = input.bool(false, "Reverse (Ters Çevir)",   group=grp_fib_st)
+fibShowPrice    = input.bool(false, "Fiyat Göster",            group=grp_fib_st)
+fibShowCoord    = input.bool(false, "Koordinatları Göster",    group=grp_fib_st)
+fibShowExt      = input.bool(false, "Extension Göster",        group=grp_fib_st)
+
+// ─── Seviye Etiketleri ──────────────────────────────────────
+fibLevelDisplay = input.string("Değer", "Seviye Gösterimi", options=["Değer", "Yüzde", "Değer + Yüzde"], group=grp_fib_st)
+fibLabelSide    = input.string("Sağ",   "Etiket Pozisyonu",  options=["Sol", "Sağ", "Orta"], group=grp_fib_st)
+
+grp_swing = "🎯 Swing Filtresi (ZigZag Yapısal)"
+swingFilter     = input.string("Kapalı", "Swing Filtresi", options=["Kapalı", "Sadece Yakınlık", "Yakınlık + Yön"], group=grp_swing)
+swingProximity  = input.float(0.5, "Yakınlık (ATR Çarpanı)", group=grp_swing, step=0.1, minval=0.1, maxval=5.0, tooltip="ZigZag swing high/low noktasına bu kadar ATR uzaklık içinde olmalı.")
+swingTF         = input.string("Ana TF", "Swing Referans TF", options=["Ana TF", "Orta TF", "Her İkisi"], group=grp_swing)
+
+grp_signal = "🚀 Sinyal Motoru (Core Logic)"
+sigReqChoch     = input.bool(true, "1m CHoCH Onayı Bekle", group=grp_signal)
+sigUseFibConf   = input.bool(true, "HTF Fib Golden Zone Şartı (0.618-0.886)", group=grp_signal)
+sigUseQML       = input.bool(true, "QML (Quasimodo) Sol Omuz Şartı", group=grp_signal)
+grp_confirm = "✅ Onay Mekanizması"
+useConfirm   = input.bool(false, "Mum Onayı Kullan", group=grp_confirm)
+confirmBars  = input.int(3, "Maks. Onay Bekleme (mum)", group=grp_confirm, minval=1, maxval=10)
+minSmtCount  = input.int(1, "Minimum SMT Parite Sayısı", group=grp_confirm, minval=1, maxval=7)
+
+grp_osc = "📈 Osilatörler"
+rsiFilter    = input.string("Kapalı", "RSI Filtresi", options=["Kapalı", "Divergence", "Aşırı Bölge"], group=grp_osc)
+rsiLen       = input.int(14, "RSI Periyod", group=grp_osc, minval=5, maxval=30)
+aoFilter     = input.string("Kapalı", "AO Filtresi", options=["Kapalı", "Momentum"], group=grp_osc)
+
+grp_session = "⏰ Seans Filtresi"
+sessionFilter = input.string("Kapalı", "Seans Filtresi", options=["Kapalı", "London", "New York", "London+NY"], group=grp_session)
+londonSess    = input.session("1000-1500", "London (TR Saati)", group=grp_session)
+nySess        = input.session("1630-2000", "NY (TR Saati)", group=grp_session)
+
+grp_trade = "💰 Ticaret Yönetimi (Hedef/Stop)"
+showSLTP       = input.bool(false, "SL/TP Seviyelerini Göster", group=grp_trade)
+tpMode          = input.string("Statik RR", "TP Modu", options=["Statik RR", "Dinamik Fib Extension", "Karşıt QML Hedefi"], group=grp_trade)
+atrMultSL      = input.float(1.5, "ATR SL Çarpanı", group=grp_trade, step=0.1, minval=0.5, maxval=5.0)
+usePivotSL     = input.bool(false, "Pivot Bazlı SL (Hibrit)", group=grp_trade)
+rrTP1          = input.float(1.0, "Statik TP1 R:R", group=grp_trade, step=0.1, minval=0.5, maxval=5.0)
+rrTP2          = input.float(2.0, "Statik TP2 R:R", group=grp_trade, step=0.1, minval=1.0, maxval=10.0)
+dynTp1Lvl      = input.float(-0.272, "Dinamik TP1 (Fib Ext)", group=grp_trade, step=0.1)
+dynTp2Lvl      = input.float(-0.618, "Dinamik TP2 (Fib Ext)", group=grp_trade, step=0.1)
+sltpExtendBars = input.int(20, "SL/TP Uzunluk (bar)", group=grp_trade)
+sltpOffsetBars = input.int(0, "SL/TP Kaydırma (bar)", group=grp_trade)
+sltpLineStyle  = input.string("Kesikli", "SL/TP Çizgi Tipi", options=["Düz", "Kesikli", "Noktalı"], group=grp_trade)
+
+grp_bt = "📊 Backtest"
+showBacktest = input.bool(false, "Backtest Göster", group=grp_bt)
+useBE        = input.bool(false, "TP1'de Break Even", group=grp_bt)
+
+grp_dash = "📋 Dashboard"
+showDash     = input.bool(false, "Dashboard Göster", group=grp_dash)
+dashPos      = input.string("Sağ Üst", "Konum", options=["Sol Üst", "Sağ Üst", "Sol Alt", "Sağ Alt"], group=grp_dash)
+dashSize     = input.string("Normal", "Boyut", options=["Küçük", "Normal", "Büyük"], group=grp_dash)
+dashBgAlpha  = input.int(100, "Saydamlık", group=grp_dash, minval=0, maxval=100)
+
+grp_style = "🎨 Tüm Renkler & Boyutlar"
+bullLineColor   = input.color(color.rgb(12, 165, 81),      "Boğa SMT Çizgi",     inline="s1", group=grp_style)
+bullLabelColor  = input.color(color.rgb(12, 165, 81, 50),  "Etiket",            inline="s1", group=grp_style)
+bearLineColor   = input.color(color.rgb(209, 21, 21),      "Ayı SMT Çizgi",      inline="s2", group=grp_style)
+bearLabelColor  = input.color(color.rgb(209, 21, 21, 50),  "Etiket",            inline="s2", group=grp_style)
+labelTextColor  = input.color(color.white,                  "SMT Etiket Yazı",   group=grp_style)
+smtLineWidth    = input.int(1, "SMT Çizgi Kalınlığı", group=grp_style, minval=1, maxval=5)
+msBullColor     = input.color(color.rgb(0, 100, 0),      "MS Bullish Renk",  inline="s3", group=grp_style)
+msBearColor     = input.color(color.rgb(220, 50, 50),      "Bearish Renk",     inline="s3", group=grp_style)
+style_fib_premium    = input.color(color.rgb(220, 50, 50),  "Fib Premium",     inline="s4", group=grp_style)
+style_fib_discount   = input.color(color.rgb(62, 146, 65),  "Discount",        inline="s4", group=grp_style)
+style_fib_eq         = input.color(color.rgb(255, 215, 0),  "EQ",              inline="s5", group=grp_style)
+style_fib_boundary   = input.color(color.rgb(180, 180, 180),"Sınır",           inline="s5", group=grp_style)
+style_fib_ext        = input.color(color.rgb(0, 180, 255),  "Extension",       inline="s5", group=grp_style)
+style_fib_alpha      = input.int(20, "Fib Saydamlık", group=grp_style, minval=0, maxval=90)
+style_entry_color    = input.color(color.rgb(100, 150, 255),"Entry",           inline="s6", group=grp_style)
+style_sl_color       = input.color(color.rgb(220, 50, 50),  "SL",              inline="s6", group=grp_style)
+style_tp1_color      = input.color(color.rgb(62, 146, 65),  "TP1",             inline="s7", group=grp_style)
+style_tp2_color      = input.color(color.rgb(62, 146, 65),  "TP2",             inline="s7", group=grp_style)
+style_sltp_width     = input.int(2, "SL/TP Kalınlık", group=grp_style, minval=1, maxval=4)
+style_dash_label     = input.color(color.black,              "Dash Etiket",     inline="s8", group=grp_style)
+style_dash_title     = input.color(color.rgb(255, 215, 0),   "Başlık",          inline="s8", group=grp_style)
+style_dash_neutral   = input.color(color.black,              "Nötr",            inline="s9", group=grp_style)
+style_dash_positive  = input.color(color.rgb(62, 146, 65),   "Pozitif",         inline="s9", group=grp_style)
+style_dash_negative  = input.color(color.rgb(220, 50, 50),   "Negatif",         inline="s9", group=grp_style)
+style_fib_lbl_size   = input.string("Küçük",  "Fib Etiket",     options=["Mini", "Küçük", "Normal"], inline="sz1", group=grp_style)
+style_sltp_lblsize   = input.string("Küçük",  "SL/TP Etiket",   options=["Mini", "Küçük", "Normal"], inline="sz1", group=grp_style)
+alertSize            = input.string("tiny", "Sinyal Oku Boyutu", options=["tiny", "small", "normal", "large", "huge"], group=grp_style)
+alertStyle           = input.string("Üçgen", "Sinyal Oku Şekli", options=["Üçgen", "Ok", "Etiket"], group=grp_style)
+style_bos_main_size  = input.string("Küçük",  "BOS Ana TF",     options=["Mini", "Küçük", "Normal"], inline="sz2", group=grp_style)
+style_bos_sub_size   = input.string("Mini",   "Orta TF",        options=["Mini", "Küçük", "Normal"], inline="sz2", group=grp_style)
+style_swing_lbl_size = input.string("Küçük",  "HH/HL/LH/LL",    options=["Mini", "Küçük", "Normal"], group=grp_style)
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 2: YARDIMCI DÜZ DEĞİŞKENLER
+// ═══════════════════════════════════════════════════════════
+get_short_name(s) =>
+    arr = str.split(s, ":")
+    array.size(arr) > 1 ? array.get(arr, 1) : s
+
+var string n1 = get_short_name(sym1), var string n2 = get_short_name(sym2)
+var string n3 = get_short_name(sym3), var string n4 = get_short_name(sym4)
+var string n5 = get_short_name(sym5), var string n6 = get_short_name(sym6)
+var string n7 = get_short_name(sym7)
+
+// f_auto_swing kaldırıldı — ZigZag MTF kullanılıyor
+
+dash_text_size = dashSize == "Küçük" ? size.tiny : dashSize == "Normal" ? size.small : size.normal
+fib_lbl_sz     = style_fib_lbl_size == "Mini" ? size.tiny : style_fib_lbl_size == "Küçük" ? size.small : size.normal
+sltp_lbl_sz    = style_sltp_lblsize == "Mini" ? size.tiny : style_sltp_lblsize == "Küçük" ? size.small : size.normal
+bos_main_sz    = style_bos_main_size == "Mini" ? size.tiny : style_bos_main_size == "Küçük" ? size.small : size.normal
+bos_sub_sz     = style_bos_sub_size == "Mini" ? size.tiny : style_bos_sub_size == "Küçük" ? size.small : size.normal
+swing_lbl_sz   = style_swing_lbl_size == "Mini" ? size.tiny : style_swing_lbl_size == "Küçük" ? size.small : size.normal
+
+fib_ls         = fibLineStyle == "Düz" ? line.style_solid : fibLineStyle == "Kesikli" ? line.style_dashed : line.style_dotted
+fib_ext_mode   = fibExtend == "Sağa" ? extend.right : fibExtend == "İki Yöne" ? extend.both : extend.none
+sltp_ls        = sltpLineStyle == "Düz" ? line.style_solid : sltpLineStyle == "Kesikli" ? line.style_dashed : line.style_dotted
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 3: PARİTE VERİ ÇEKİMLERİ
+// ═══════════════════════════════════════════════════════════
+[h1, l1, c1, o1] = request.security(sym1, timeframe.period, [high, low, close, open])
+[h2, l2, c2, o2] = request.security(sym2, timeframe.period, [high, low, close, open])
+[h3, l3, c3, o3] = request.security(sym3, timeframe.period, [high, low, close, open])
+[h4, l4, c4, o4] = request.security(sym4, timeframe.period, [high, low, close, open])
+[h5, l5, c5, o5] = request.security(sym5, timeframe.period, [high, low, close, open])
+[h6, l6, c6, o6] = request.security(sym6, timeframe.period, [high, low, close, open])
+[h7, l7, c7, o7] = request.security(sym7, timeframe.period, [high, low, close, open])
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 4: ZIGZAG MTF MARKET YAPISI MOTORU + DİNAMİK FİB
+// Gecikmesiz swing tespiti — highestbars/lowestbars kullanır
+// request.security gerektirmez — MTF desteği time() ile gömülü
+// ═══════════════════════════════════════════════════════════
+ms_zigzag(string tf, int prd, bool useCloseConf) =>
+    // ─── MTF Pencere Hesabı ─────────────────────────────────
+    bool newbar = ta.change(time(tf)) != 0
+    int bi = ta.valuewhen(newbar, bar_index, prd - 1)
+    int len = math.max(bar_index - nz(bi, bar_index) + 1, 1)
+
+    // ─── Anlık Swing Tespiti ────────────────────────────────
+    float _ph = ta.highestbars(high, len) == 0 ? high : na
+    float _pl = ta.lowestbars(low, len) == 0 ? low : na
+
+    // ─── ZigZag Yön ve Swing Takibi ────────────────────────
+    var int dir = 0
+    var float zz_curr = na,   var int zz_curr_t = na,   var float zz_curr_c = na    // Canlı uç
+    var float zz_p1 = na,     var int zz_p1_t = na,     var float zz_p1_c = na      // Son onaylı nokta
+    var float zz_p2 = na,     var int zz_p2_t = na,     var float zz_p2_c = na      // Bir önceki onaylı
+    var float zz_p3 = na,     var int zz_p3_t = na,     var float zz_p3_c = na      // İki önceki onaylı
+
+    int prev_dir = dir
+    dir := not na(_ph) and na(_pl) ? 1 : not na(_pl) and na(_ph) ? -1 : dir
+    bool dirchanged = dir != prev_dir
+
+    if dirchanged
+        // Yön değişti → eski canlı ucu onayla, yeni canlı uç başlat
+        zz_p3 := zz_p2
+        zz_p3_t := zz_p2_t
+        zz_p3_c := zz_p2_c
+        zz_p2 := zz_p1
+        zz_p2_t := zz_p1_t
+        zz_p2_c := zz_p1_c
+        zz_p1 := zz_curr
+        zz_p1_t := zz_curr_t
+        zz_p1_c := zz_curr_c
+        zz_curr := dir == 1 ? high : low
+        zz_curr_t := time
+        zz_curr_c := dir == 1 ? math.max(open, close) : math.min(open, close)
+    else
+        // Aynı yön → canlı ucu güncelle
+        if dir == 1
+            if na(zz_curr) or high >= zz_curr
+                zz_curr := high
+                zz_curr_t := time
+                zz_curr_c := math.max(open, close)
+        else if dir == -1
+            if na(zz_curr) or low <= zz_curr
+                zz_curr := low
+                zz_curr_t := time
+                zz_curr_c := math.min(open, close)
+
+    // ─── Onaylı Swing High/Low ──────────────────────────────
+    var float conf_high = na,  var int conf_high_t = na, var float conf_high_c = na
+    var float conf_low = na,   var int conf_low_t = na,  var float conf_low_c = na
+    var float prev_conf_high = na, var int prev_conf_high_t = na, var float prev_conf_high_c = na
+    var float prev_conf_low = na,  var int prev_conf_low_t = na,  var float prev_conf_low_c = na
+    var bool high_active = false
+    var bool low_active = false
+
+    float _nsh = na, float _nsl = na
+    int _nsh_t = na, int _nsl_t = na
+    int _swing_type = 0
+
+    // QML Tracker Variables
+    var float qml_bull_L1 = na, var int qml_bull_L1_t = na, var float qml_bull_L1_c = na
+    var float qml_bull_H1 = na, var int qml_bull_H1_t = na
+    var float qml_bull_L2 = na, var int qml_bull_L2_t = na
+    var bool  qml_bull_armed = false
+
+    var float qml_bear_H1 = na, var int qml_bear_H1_t = na, var float qml_bear_H1_c = na
+    var float qml_bear_L1 = na, var int qml_bear_L1_t = na
+    var float qml_bear_H2 = na, var int qml_bear_H2_t = na
+    var bool  qml_bear_armed = false
+
+    if dirchanged
+        if dir == 1  // Aşağı gidiyordu, yukarı döndü → LOW onaylandı
+            prev_conf_low := conf_low
+            prev_conf_low_t := conf_low_t
+            prev_conf_low_c := conf_low_c
+            conf_low := zz_p1
+            conf_low_t := zz_p1_t
+            conf_low_c := zz_p1_c
+            low_active := true
+            _swing_type := na(prev_conf_low) ? -2 : conf_low <= prev_conf_low ? -2 : -1
+            _nsl := conf_low
+            _nsl_t := conf_low_t
+            
+            // Bullish QML Check (L1 -> H1 -> L2)
+            if not na(prev_conf_low) and conf_low < prev_conf_low
+                qml_bull_armed := true
+                qml_bull_L1 := prev_conf_low
+                qml_bull_L1_t := prev_conf_low_t
+                qml_bull_L1_c := prev_conf_low_c
+                qml_bull_H1 := conf_high
+                qml_bull_H1_t := conf_high_t
+                qml_bull_L2 := conf_low
+                qml_bull_L2_t := conf_low_t
+            else
+                qml_bull_armed := false
+
+        else  // Yukarı gidiyordu, aşağı döndü → HIGH onaylandı
+            prev_conf_high := conf_high
+            prev_conf_high_t := conf_high_t
+            prev_conf_high_c := conf_high_c
+            conf_high := zz_p1
+            conf_high_t := zz_p1_t
+            conf_high_c := zz_p1_c
+            high_active := true
+            _swing_type := na(prev_conf_high) ? 2 : conf_high >= prev_conf_high ? 2 : 1
+            _nsh := conf_high
+            _nsh_t := conf_high_t
+
+            // Bearish QML Check (H1 -> L1 -> H2)
+            if not na(prev_conf_high) and conf_high > prev_conf_high
+                qml_bear_armed := true
+                qml_bear_H1 := prev_conf_high
+                qml_bear_H1_t := prev_conf_high_t
+                qml_bear_H1_c := prev_conf_high_c
+                qml_bear_L1 := conf_low
+                qml_bear_L1_t := conf_low_t
+                qml_bear_H2 := conf_high
+                qml_bear_H2_t := conf_high_t
+            else
+                qml_bear_armed := false
+
+    // ─── BOS / CHoCH Detection & MS QML Engine ──────────────
+    var int prevBreakDir = 0
+    var int _bias = 0
+    int _brk = 0
+    float _brk_lvl = na
+    int _brk_t = na
+    float _highSrc = useCloseConf ? close : high
+    float _lowSrc = useCloseConf ? close : low
+
+    // ─── Makro Trend (Dealing Range) Takibi ─────────────────
+    var float trend_origin_lvl = na, var int trend_origin_t = na, var float trend_origin_c = na
+    var float trend_extreme_lvl = na, var int trend_extreme_t = na, var float trend_extreme_c = na
+    var float prev_macro_top = na, var int prev_macro_top_t = na, var float prev_macro_top_c = na
+    var float prev_macro_bot = na, var int prev_macro_bot_t = na, var float prev_macro_bot_c = na
+
+    int prev_bias = _bias
+    
+    float qml_bull = na, int qml_bull_t = na, float qml_bull_c = na, float qml_bull_n = na, int qml_bull_c_t = na, float qml_bull_h = na, int qml_bull_h_t = na
+    float qml_bear = na, int qml_bear_t = na, float qml_bear_c = na, float qml_bear_n = na, int qml_bear_c_t = na, float qml_bear_h = na, int qml_bear_h_t = na
+
+    if not na(conf_high) and high_active and _highSrc > conf_high
+        _brk := prevBreakDir == -1 ? 2 : 1
+        _brk_lvl := conf_high
+        _brk_t := conf_high_t
+        prevBreakDir := 1
+        _bias := 1
+        high_active := false
+        
+        // Bullish QML Trigger
+        if _brk == 2 and qml_bull_armed and conf_high == qml_bull_H1
+            qml_bull := qml_bull_L1
+            qml_bull_t := qml_bull_L1_t
+            qml_bull_c := qml_bull_L1_c
+            qml_bull_n := qml_bull_H1
+            qml_bull_c_t := qml_bull_H1_t
+            qml_bull_h := qml_bull_L2
+            qml_bull_h_t := qml_bull_L2_t
+            qml_bull_armed := false
+
+    if not na(conf_low) and low_active and _lowSrc < conf_low
+        _brk := prevBreakDir == 1 ? -2 : -1
+        _brk_lvl := conf_low
+        _brk_t := conf_low_t
+        prevBreakDir := -1
+        _bias := -1
+        low_active := false
+        
+        // Bearish QML Trigger
+        if _brk == -2 and qml_bear_armed and conf_low == qml_bear_L1
+            qml_bear := qml_bear_H1
+            qml_bear_t := qml_bear_H1_t
+            qml_bear_c := qml_bear_H1_c
+            qml_bear_n := qml_bear_L1
+            qml_bear_c_t := qml_bear_L1_t
+            qml_bear_h := qml_bear_H2
+            qml_bear_h_t := qml_bear_H2_t
+            qml_bear_armed := false
+        
+    if _bias != prev_bias
+        if prev_bias == 0
+            // İlk trend tespiti — makro değerleri başlat
+            if _bias == 1
+                trend_origin_lvl := conf_low
+                trend_origin_t := conf_low_t
+                trend_origin_c := conf_low_c
+                trend_extreme_lvl := conf_high
+                trend_extreme_t := conf_high_t
+                trend_extreme_c := conf_high_c
+            else if _bias == -1
+                trend_origin_lvl := conf_high
+                trend_origin_t := conf_high_t
+                trend_origin_c := conf_high_c
+                trend_extreme_lvl := conf_low
+                trend_extreme_t := conf_low_t
+                trend_extreme_c := conf_low_c
+        else
+            // Gerçek bir CHoCH oldu — eski trendi kaydet
+            if _bias == 1
+                prev_macro_top := trend_origin_lvl
+                prev_macro_top_t := trend_origin_t
+                prev_macro_top_c := trend_origin_c
+                prev_macro_bot := trend_extreme_lvl
+                prev_macro_bot_t := trend_extreme_t
+                prev_macro_bot_c := trend_extreme_c
+                trend_origin_lvl := trend_extreme_lvl
+                trend_origin_t := trend_extreme_t
+                trend_origin_c := trend_extreme_c
+                trend_extreme_lvl := conf_high
+                trend_extreme_t := conf_high_t
+                trend_extreme_c := conf_high_c
+            else if _bias == -1
+                prev_macro_top := trend_extreme_lvl
+                prev_macro_top_t := trend_extreme_t
+                prev_macro_top_c := trend_extreme_c
+                prev_macro_bot := trend_origin_lvl
+                prev_macro_bot_t := trend_origin_t
+                prev_macro_bot_c := trend_origin_c
+                trend_origin_lvl := trend_extreme_lvl
+                trend_origin_t := trend_extreme_t
+                trend_origin_c := trend_extreme_c
+                trend_extreme_lvl := conf_low
+                trend_extreme_t := conf_low_t
+                trend_extreme_c := conf_low_c
+    else
+        if _bias == 1
+            if not na(conf_high) and conf_high > nz(trend_extreme_lvl, 0)
+                trend_extreme_lvl := conf_high
+                trend_extreme_t := conf_high_t
+                trend_extreme_c := conf_high_c
+        else if _bias == -1
+            if not na(conf_low) and conf_low < nz(trend_extreme_lvl, 999999)
+                trend_extreme_lvl := conf_low
+                trend_extreme_t := conf_low_t
+                trend_extreme_c := conf_low_c
+
+    // ─── Fibonacci: Canlı Makro (Active Dealing Range) ──────────────────
+    float fib_live_top = na, float fib_live_bot = na
+    int fib_live_top_t = na, int fib_live_bot_t = na
+
+    if _bias != 0 and not na(trend_origin_lvl)
+        float live_extreme = trend_extreme_lvl
+        int live_extreme_t = trend_extreme_t
+        if _bias == 1
+            if dir == 1 and not na(zz_curr) and (na(live_extreme) or zz_curr > live_extreme)
+                live_extreme := zz_curr
+                live_extreme_t := zz_curr_t
+            if high > live_extreme
+                live_extreme := high
+                live_extreme_t := time
+        else if _bias == -1
+            if dir == -1 and not na(zz_curr) and (na(live_extreme) or zz_curr < live_extreme)
+                live_extreme := zz_curr
+                live_extreme_t := zz_curr_t
+            if low < live_extreme
+                live_extreme := low
+                live_extreme_t := time
+            
+        if not na(live_extreme)
+            fib_live_top := math.max(trend_origin_lvl, live_extreme)
+            fib_live_bot := math.min(trend_origin_lvl, live_extreme)
+            fib_live_top_t := trend_origin_lvl >= live_extreme ? trend_origin_t : live_extreme_t
+            fib_live_bot_t := trend_origin_lvl < live_extreme ? trend_origin_t : live_extreme_t
+
+    // ─── Fibonacci: Kırılan Makro (Broken Dealing Range) ────────────────
+    float fib_broken_top = na, float fib_broken_bot = na
+    int fib_broken_top_t = na, int fib_broken_bot_t = na
+
+    if not na(prev_macro_top) and not na(prev_macro_bot)
+        fib_broken_top := prev_macro_top
+        fib_broken_bot := prev_macro_bot
+        fib_broken_top_t := prev_macro_top_t
+        fib_broken_bot_t := prev_macro_bot_t
+
+    [_bias, _brk, _brk_lvl, _brk_t, conf_high, conf_low, conf_high_t, conf_low_t, _nsh, _nsl, _nsh_t, _nsl_t, _swing_type, fib_live_top, fib_live_bot, fib_live_top_t, fib_live_bot_t, fib_broken_top, fib_broken_bot, fib_broken_top_t, fib_broken_bot_t, qml_bull, qml_bull_t, qml_bull_c, qml_bull_n, qml_bull_c_t, qml_bull_h, qml_bull_h_t, qml_bear, qml_bear_t, qml_bear_c, qml_bear_n, qml_bear_c_t, qml_bear_h, qml_bear_h_t]
+
+// ZigZag MTF çağrıları (request.security YOK — her çağrı kendi state'ini tutar)
+bool useClose = bosConf == "Close"
+
+[ms_main_bias, ms_main_brk, ms_main_brk_lvl, ms_main_brk_t, ms_main_sh, ms_main_sl, ms_main_sh_t, ms_main_sl_t, ms_main_nsh, ms_main_nsl, ms_main_nsh_t, ms_main_nsl_t, ms_main_stype, f3_l_t, f3_l_b, f3_l_tt, f3_l_bt, f3_b_t, f3_b_b, f3_b_tt, f3_b_bt, main_qml_bull, main_qml_bull_t, main_qml_bull_c, main_qml_bull_n, main_qml_bull_c_t, main_qml_bull_h, main_qml_bull_h_t, main_qml_bear, main_qml_bear_t, main_qml_bear_c, main_qml_bear_n, main_qml_bear_c_t, main_qml_bear_h, main_qml_bear_h_t] = ms_zigzag(msTF_main, zzPrd_main, useClose)
+[ms_sub_bias, ms_sub_brk, ms_sub_brk_lvl, ms_sub_brk_t, ms_sub_sh, ms_sub_sl, ms_sub_sh_t, ms_sub_sl_t, ms_sub_nsh, ms_sub_nsl, ms_sub_nsh_t, ms_sub_nsl_t, ms_sub_stype, f2_l_t, f2_l_b, f2_l_tt, f2_l_bt, f2_b_t, f2_b_b, f2_b_tt, f2_b_bt, sub_qml_bull, sub_qml_bull_t, sub_qml_bull_c, sub_qml_bull_n, sub_qml_bull_c_t, sub_qml_bull_h, sub_qml_bull_h_t, sub_qml_bear, sub_qml_bear_t, sub_qml_bear_c, sub_qml_bear_n, sub_qml_bear_c_t, sub_qml_bear_h, sub_qml_bear_h_t] = ms_zigzag(msTF_sub, zzPrd_sub, useClose)
+[ms1_bias, ms1_brk, ms1_brk_lvl, ms1_brk_t, ms1_sh, ms1_sl, ms1_sh_t, ms1_sl_t, ms1_nsh, ms1_nsl, ms1_nsh_t, ms1_nsl_t, ms1_stype, f1_l_t, f1_l_b, f1_l_tt, f1_l_bt, f1_b_t, f1_b_b, f1_b_tt, f1_b_bt, m1_qml_bull, m1_qml_bull_t, m1_qml_bull_c, m1_qml_bull_n, m1_qml_bull_c_t, m1_qml_bull_h, m1_qml_bull_h_t, m1_qml_bear, m1_qml_bear_t, m1_qml_bear_c, m1_qml_bear_n, m1_qml_bear_c_t, m1_qml_bear_h, m1_qml_bear_h_t] = ms_zigzag(msTF_minor, zzPrd_minor, useClose)
+
+
+// ─── QML STATE MANAGEMENT (DRAGON FLY) ──────────────────────
+type QMLZone
+    float lvl
+    int t
+    int b_idx
+    float c
+    float head
+    bool is_bull
+    bool is_valid
+    box b
+    label l
+    string tf
+    array<line> lines
+    array<label> labels
+
+var qml_zones = array.new<QMLZone>()
+
+f_add_qml(float lvl, int t, float c, float n, int c_t, float head, int h_t, bool is_bull, bool show_visual, string tf_label) =>
+    bool skip = false
+    if qmlShoulderProtect > 0 and array.size(qml_zones) > 0
+        for i = array.size(qml_zones) - 1 to 0
+            QMLZone q = array.get(qml_zones, i)
+            if q.is_valid and q.is_bull == is_bull
+                if (bar_index - q.b_idx) <= qmlShoulderProtect
+                    bool is_better = is_bull ? (head < q.head) : (head > q.head)
+                    if is_better
+                        q.is_valid := false
+                        if not na(q.b)
+                            box.delete(q.b)
+                            label.delete(q.l)
+                        if array.size(q.lines) > 0
+                            for j = 0 to array.size(q.lines) - 1
+                                line.delete(array.get(q.lines, j))
+                        if array.size(q.labels) > 0
+                            for j = 0 to array.size(q.labels) - 1
+                                label.delete(array.get(q.labels, j))
+                    else
+                        skip := true
+                    break
+                    
+    if not skip
+        box bx = na
+        label lb = na
+        array<line> qml_lines = array.new<line>()
+        array<label> qml_labels = array.new<label>()
+        if show_visual
+            color col = is_bull ? msBullColor : msBearColor
+            string style_lbl = is_bull ? label.style_label_up : label.style_label_down
+            float top_y = is_bull ? c : lvl
+            float bot_y = is_bull ? lvl : c
+            bx := box.new(left=t, top=top_y, right=time, bottom=bot_y, xloc=xloc.bar_time, border_color=color.new(col, 50), border_width=1, border_style=line.style_dashed, bgcolor=color.new(col, 85))
+            lb := label.new(x=time, y=lvl, text="⚡ QML " + tf_label, xloc=xloc.bar_time, color=color.new(color.white, 100), textcolor=col, style=style_lbl, size=size.small)
+            
+            // Yapı Çizimi (LS -> Neck -> Head -> CHoCH)
+            if showQmlStructure
+                array.push(qml_lines, line.new(t, lvl, c_t, n, xloc=xloc.bar_time, color=col, width=1, style=line.style_dotted))
+                array.push(qml_lines, line.new(c_t, n, h_t, head, xloc=xloc.bar_time, color=col, width=1, style=line.style_dotted))
+                // Kırılan boyun çizgisini yatay olarak göster
+                array.push(qml_lines, line.new(c_t, n, time, n, xloc=xloc.bar_time, color=col, width=2, style=line.style_solid))
+                array.push(qml_labels, label.new(t, lvl, "LS", xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=col, size=size.tiny, style=style_lbl))
+                array.push(qml_labels, label.new(c_t, n, "N", xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=col, size=size.tiny, style=is_bull ? label.style_label_down : label.style_label_up))
+                array.push(qml_labels, label.new(h_t, head, "H", xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=col, size=size.tiny, style=style_lbl))
+
+        array.push(qml_zones, QMLZone.new(lvl, t, bar_index, c, head, is_bull, true, bx, lb, tf_label, qml_lines, qml_labels))
+
+f_get_closest_valid_qml(float entry_price, bool search_bull) =>
+    float closest_lvl = na
+    float min_dist = 999999.0
+    if array.size(qml_zones) > 0
+        for i = 0 to array.size(qml_zones) - 1
+            QMLZone q = array.get(qml_zones, i)
+            if q.is_valid and q.is_bull == search_bull
+                if search_bull and q.c < entry_price
+                    float dist = entry_price - q.c
+                    if dist < min_dist
+                        min_dist := dist
+                        closest_lvl := q.c
+                else if not search_bull and q.c > entry_price
+                    float dist = q.c - entry_price
+                    if dist < min_dist
+                        min_dist := dist
+                        closest_lvl := q.c
+    closest_lvl
+
+// QML Dedektörü
+if not na(main_qml_bull_t)
+    f_add_qml(main_qml_bull, main_qml_bull_t, main_qml_bull_c, main_qml_bull_n, main_qml_bull_c_t, main_qml_bull_h, main_qml_bull_h_t, true, showQmlMain, msTF_main)
+if not na(main_qml_bear_t)
+    f_add_qml(main_qml_bear, main_qml_bear_t, main_qml_bear_c, main_qml_bear_n, main_qml_bear_c_t, main_qml_bear_h, main_qml_bear_h_t, false, showQmlMain, msTF_main)
+
+if not na(sub_qml_bull_t)
+    f_add_qml(sub_qml_bull, sub_qml_bull_t, sub_qml_bull_c, sub_qml_bull_n, sub_qml_bull_c_t, sub_qml_bull_h, sub_qml_bull_h_t, true, showQmlSub, msTF_sub)
+if not na(sub_qml_bear_t)
+    f_add_qml(sub_qml_bear, sub_qml_bear_t, sub_qml_bear_c, sub_qml_bear_n, sub_qml_bear_c_t, sub_qml_bear_h, sub_qml_bear_h_t, false, showQmlSub, msTF_sub)
+
+if not na(m1_qml_bull_t)
+    f_add_qml(m1_qml_bull, m1_qml_bull_t, m1_qml_bull_c, m1_qml_bull_n, m1_qml_bull_c_t, m1_qml_bull_h, m1_qml_bull_h_t, true, showQmlMinor, msTF_minor)
+if not na(m1_qml_bear_t)
+    f_add_qml(m1_qml_bear, m1_qml_bear_t, m1_qml_bear_c, m1_qml_bear_n, m1_qml_bear_c_t, m1_qml_bear_h, m1_qml_bear_h_t, false, showQmlMinor, msTF_minor)
+
+// QML Güncelleme Döngüsü (Mitigasyon & İptal)
+if array.size(qml_zones) > 0
+    for i = array.size(qml_zones) - 1 to 0
+        QMLZone q = array.get(qml_zones, i)
+        if q.is_valid
+            // Çizimi uzat
+            if not na(q.b)
+                box.set_right(q.b, time)
+                label.set_x(q.l, time)
+                
+            // Mitigasyon Kontrolü (Kutuya girerse)
+            if qmlMitigate and bar_index > q.b_idx
+                bool mitigated = q.is_bull ? low <= q.c : high >= q.c
+                if mitigated
+                    q.is_valid := false
+                    if not na(q.b)
+                        color col = q.is_bull ? msBullColor : msBearColor
+                        box.set_bgcolor(q.b, color.new(col, 95))
+            
+            // Geçersizlik Kontrolü (Head kırılırsa)
+            if q.is_valid and qmlInvalidate
+                bool invalidated = q.is_bull ? close < q.head : close > q.head
+                if invalidated
+                    q.is_valid := false
+                    if not na(q.b)
+                        box.delete(q.b)
+                        label.delete(q.l)
+                    if array.size(q.lines) > 0
+                        for j = 0 to array.size(q.lines) - 1
+                            line.delete(array.get(q.lines, j))
+                    if array.size(q.labels) > 0
+                        for j = 0 to array.size(q.labels) - 1
+                            label.delete(array.get(q.labels, j))
+                    array.remove(qml_zones, i)
+
+// ═══════════════════════════════════════════════════════════
+// QML V3: SMT PİVOT BAZLI SWEEP MOTORU (YENİDEN TASARIMI)
+// SMT motorunun aynı leftBars/rightBars pivotlarını kullanır.
+// Bu sayede ZigZag TF bağımsız, çok daha hassas tespite sahip.
+// ═══════════════════════════════════════════════════════════
+type QmlHistPivot
+    float lvl       // Pivot fiyatı (Sol Omuz)
+    int   t         // Pivot zamanı
+    float ls_c      // Sol omuz gövde kapanışı
+    bool  is_high   // true = tepe, false = dip
+    bool  swept     // Fiyat tarafından süpürüldü mü?
+    float head_lvl  // Süpürme anındaki en yüksek/düşük
+    int   head_t    // Süpürme zamanı
+    float neck_lvl  // Boyun seviyesi (son karşı pivot)
+    int   neck_t    // Boyun zamanı
+    bool  triggered // QML çizimi yapıldı mı?
+
+var qml_hist_highs = array.new<QmlHistPivot>()
+var qml_hist_lows  = array.new<QmlHistPivot>()
+
+// SMT motorunun aynı pl/ph pivotları (leftBars/rightBars) ile
+// en son karşı pivot boyun takibi
+var float v3_last_ph = na, var int v3_last_ph_t = na, var float v3_last_ph_c = na
+var float v3_last_pl = na, var int v3_last_pl_t = na, var float v3_last_pl_c = na
+
+// V3 görsel flag: V3 açıksa daima çiz (diğer QML gösterim ayarlarından bağımsız)
+bool v3_show = qmlHistEnabled
+// TF label için
+string v3_tf_label = "V3"
+
+// NOTE: pl ve ph Bölüm 9'da hesaplanır — V3 orada henüz hesaplanmamış.
+// Bu nedenle V3'ü pl/ph hesaplandıktan SONRA bir blokta çalıştırmak
+// için gerekli değerleri şimdi ta.pivotlow/high ile tekrar al.
+// leftBars/rightBars, SMT ile aynı değerleri kullanır (global scope'ta tanımlı).
+float v3_ph = ta.pivothigh(high, leftBars, rightBars)
+float v3_pl = ta.pivotlow(low,  leftBars, rightBars)
+
+if qmlHistEnabled
+    // Boyun takibini güncelle
+    if not na(v3_ph)
+        v3_last_ph   := v3_ph
+        v3_last_ph_t := time[rightBars]
+        v3_last_ph_c := math.max(open[rightBars], close[rightBars])
+    if not na(v3_pl)
+        v3_last_pl   := v3_pl
+        v3_last_pl_t := time[rightBars]
+        v3_last_pl_c := math.min(open[rightBars], close[rightBars])
+
+    // --- Yeni pivot: hafızaya al ---
+    if not na(v3_ph)
+        array.push(qml_hist_highs, QmlHistPivot.new(
+             v3_ph, time[rightBars], math.max(open[rightBars], close[rightBars]),
+             true, false, na, na, na, na, false))
+        if array.size(qml_hist_highs) > maxPivots
+            array.shift(qml_hist_highs)
+
+    if not na(v3_pl)
+        array.push(qml_hist_lows, QmlHistPivot.new(
+             v3_pl, time[rightBars], math.min(open[rightBars], close[rightBars]),
+             false, false, na, na, na, na, false))
+        if array.size(qml_hist_lows) > maxPivots
+            array.shift(qml_hist_lows)
+
+    // --- Bearish QML: Geçmiş TEPE süpürüldü → son pivot dip kırıldığında çiz ---
+    // Döngüler sadece mum kapanışında çalışır (RE10110 önlemi)
+    if barstate.isconfirmed and array.size(qml_hist_highs) > 0
+        for i = array.size(qml_hist_highs) - 1 to 0
+            QmlHistPivot hp = array.get(qml_hist_highs, i)
+            if hp.triggered
+                break  // Eskiden tetiklenmiş → daha eskileri atla
+            // Süpürme: fiyat bu tepeden yukarı geçti mi?
+            if not hp.swept and high > hp.lvl
+                hp.swept    := true
+                hp.head_lvl := high
+                hp.head_t   := time
+                // Boyun: süpürme anında en son bilinen pivot dip
+                hp.neck_lvl := nz(v3_last_pl, high - nz(ta.atr(14), syminfo.mintick * 50))
+                hp.neck_t   := nz(v3_last_pl_t, time)
+            // CHoCH: boyun kırıldı mı?
+            if hp.swept and not hp.triggered and not na(hp.neck_lvl)
+                bool choch_bear = bosConf == "Close" ? close < hp.neck_lvl : low < hp.neck_lvl
+                if choch_bear
+                    hp.triggered := true
+                    f_add_qml(hp.lvl, hp.t, hp.ls_c, hp.neck_lvl, hp.neck_t, hp.head_lvl, hp.head_t, false, v3_show, "V3")
+
+    // --- Bullish QML: Geçmiş DİP süpürüldü → son pivot tepe kırıldığında çiz ---
+    if barstate.isconfirmed and array.size(qml_hist_lows) > 0
+        for i = array.size(qml_hist_lows) - 1 to 0
+            QmlHistPivot lp = array.get(qml_hist_lows, i)
+            if lp.triggered
+                break  // Eskiden tetiklenmiş → daha eskileri atla
+            if not lp.swept and low < lp.lvl
+                lp.swept    := true
+                lp.head_lvl := low
+                lp.head_t   := time
+                lp.neck_lvl := nz(v3_last_ph, low + nz(ta.atr(14), syminfo.mintick * 50))
+                lp.neck_t   := nz(v3_last_ph_t, time)
+            if lp.swept and not lp.triggered and not na(lp.neck_lvl)
+                bool choch_bull = bosConf == "Close" ? close > lp.neck_lvl : high > lp.neck_lvl
+                if choch_bull
+                    lp.triggered := true
+                    f_add_qml(lp.lvl, lp.t, lp.ls_c, lp.neck_lvl, lp.neck_t, lp.head_lvl, lp.head_t, true, v3_show, "V3")
+
+totalActive = (use1 ? 1 : 0) + (use2 ? 1 : 0) + (use3 ? 1 : 0) + (use4 ? 1 : 0) + (use5 ? 1 : 0) + (use6 ? 1 : 0) + (use7 ? 1 : 0)
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 5: ÖN HESAPLAMALAR & DİNAMİK FİB FİLTRESİ
+// ═══════════════════════════════════════════════════════════
+my_atr = nz(ta.atr(14), syminfo.mintick * 50)
+swing_thresh = my_atr * swingProximity
+
+bool bull_ms_ok = true, bool bear_ms_ok = true
+if showMS and msFilterSMT
+    bull_ms_ok := ms_main_bias == 1
+    bear_ms_ok := ms_main_bias == -1
+    if msMode != "Tek Katman"
+        bull_ms_ok := bull_ms_ok and ms_sub_bias == 1
+        bear_ms_ok := bear_ms_ok and ms_sub_bias == -1
+    if msMode == "Üçlü Katman"
+        bull_ms_ok := bull_ms_ok and ms1_bias == 1
+        bear_ms_ok := bear_ms_ok and ms1_bias == -1
+
+bool xau_bull_candle = close > open
+bool xau_bear_candle = close < open
+
+// AKTİF FİB'İ BELİRLEME (Manuel ve Otomatik Hiyerarşisi)
+float active_fib_top = na
+float active_fib_bot = na
+
+if fibMan3Show and fm3_t1 != 0 and fm3_t2 != 0
+    active_fib_top := math.max(fm3_p1, fm3_p2)
+    active_fib_bot := math.min(fm3_p1, fm3_p2)
+else if fibMan2Show and fm2_t1 != 0 and fm2_t2 != 0
+    active_fib_top := math.max(fm2_p1, fm2_p2)
+    active_fib_bot := math.min(fm2_p1, fm2_p2)
+else if fibMan1Show and fm1_t1 != 0 and fm1_t2 != 0
+    active_fib_top := math.max(fm1_p1, fm1_p2)
+    active_fib_bot := math.min(fm1_p1, fm1_p2)
+else if fibAutoMainShow
+    active_fib_top := not na(f3_b_t) ? math.max(f3_b_t, f3_b_b) : math.max(f3_l_t, f3_l_b)
+    active_fib_bot := not na(f3_b_t) ? math.min(f3_b_t, f3_b_b) : math.min(f3_l_t, f3_l_b)
+else if fibAutoSubShow
+    active_fib_top := not na(f2_b_t) ? math.max(f2_b_t, f2_b_b) : math.max(f2_l_t, f2_l_b)
+    active_fib_bot := not na(f2_b_t) ? math.min(f2_b_t, f2_b_b) : math.min(f2_l_t, f2_l_b)
+else if fibAuto1mShow
+    active_fib_top := not na(f1_b_t) ? math.max(f1_b_t, f1_b_b) : math.max(f1_l_t, f1_l_b)
+    active_fib_bot := not na(f1_b_t) ? math.min(f1_b_t, f1_b_b) : math.min(f1_l_t, f1_l_b)
+
+float fib_range_act = not na(active_fib_top) and not na(active_fib_bot) ? active_fib_top - active_fib_bot : na
+float fib_pos = not na(fib_range_act) and fib_range_act > 0 ? (close - active_fib_bot) / fib_range_act : na
+
+bool fib_bull_ok = true
+bool fib_bear_ok = true
+if fibFilter != "Kapalı" and not na(fib_pos)
+    if fibFilter == "Premium/Discount"
+        fib_bull_ok := fib_pos < 0.5
+        fib_bear_ok := fib_pos > 0.5
+    else
+        fib_bull_ok := fib_pos >= 0.214 and fib_pos <= 0.382
+        fib_bear_ok := fib_pos >= 0.618 and fib_pos <= 0.786
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 7: RSI + AO HESAPLAMA
+// ═══════════════════════════════════════════════════════════
+rsi_val = ta.rsi(close, rsiLen)
+ao_val  = ta.sma(hl2, 5) - ta.sma(hl2, 34)
+
+rsi_ph = ta.pivothigh(rsi_val, 5, 5)
+rsi_pl = ta.pivotlow(rsi_val, 5, 5)
+
+var float rsi_prev_ph = na, var float rsi_curr_ph = na
+var float rsi_price_prev_ph = na, var float rsi_price_curr_ph = na
+var float rsi_prev_pl = na, var float rsi_curr_pl = na
+var float rsi_price_prev_pl = na, var float rsi_price_curr_pl = na
+
+if not na(rsi_ph)
+    rsi_prev_ph := rsi_curr_ph
+    rsi_price_prev_ph := rsi_price_curr_ph
+    rsi_curr_ph := rsi_ph
+    rsi_price_curr_ph := high[5]
+
+if not na(rsi_pl)
+    rsi_prev_pl := rsi_curr_pl
+    rsi_price_prev_pl := rsi_price_curr_pl
+    rsi_curr_pl := rsi_pl
+    rsi_price_curr_pl := low[5]
+
+bool rsi_bear_div_raw = not na(rsi_prev_ph) and rsi_price_curr_ph > rsi_price_prev_ph and rsi_curr_ph < rsi_prev_ph
+bool rsi_bull_div_raw = not na(rsi_prev_pl) and rsi_price_curr_pl < rsi_price_prev_pl and rsi_curr_pl > rsi_prev_pl
+
+var int rsi_bear_age = 99, var int rsi_bull_age = 99
+if rsi_bear_div_raw
+    rsi_bear_age := 0
+else
+    rsi_bear_age += 1
+if rsi_bull_div_raw
+    rsi_bull_age := 0
+else
+    rsi_bull_age += 1
+
+bool rsi_bull_ok = true, bool rsi_bear_ok = true
+if rsiFilter == "Divergence"
+    rsi_bull_ok := rsi_bull_age <= 15
+    rsi_bear_ok := rsi_bear_age <= 15
+else if rsiFilter == "Aşırı Bölge"
+    rsi_bull_ok := rsi_val < 35
+    rsi_bear_ok := rsi_val > 65
+
+bool ao_bull_ok = true, bool ao_bear_ok = true
+if aoFilter == "Momentum"
+    ao_bull_ok := ao_val > 0 or ao_val > ao_val[1]
+    ao_bear_ok := ao_val < 0 or ao_val < ao_val[1]
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 8: SEANS FİLTRESİ
+// ═══════════════════════════════════════════════════════════
+bool sess_ok = true
+if sessionFilter != "Kapalı"
+    bool in_london = not na(time(timeframe.period, londonSess, "Europe/Istanbul"))
+    bool in_ny = not na(time(timeframe.period, nySess, "Europe/Istanbul"))
+    if sessionFilter == "London"
+        sess_ok := in_london
+    else if sessionFilter == "New York"
+        sess_ok := in_ny
+    else
+        sess_ok := in_london or in_ny
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 9: PİVOT HESAPLAMALARI
+// ═══════════════════════════════════════════════════════════
+pl = ta.pivotlow(low, leftBars, rightBars)
+ph = ta.pivothigh(high, leftBars, rightBars)
+window = leftBars + rightBars + 1
+
+s1_l = ta.lowest(l1, window),  s1_h = ta.highest(h1, window)
+s2_l = ta.lowest(l2, window),  s2_h = ta.highest(h2, window)
+s3_l = ta.lowest(l3, window),  s3_h = ta.highest(h3, window)
+s4_l = ta.lowest(l4, window),  s4_h = ta.highest(h4, window)
+s5_l = ta.lowest(l5, window),  s5_h = ta.highest(h5, window)
+s6_l = ta.lowest(l6, window),  s6_h = ta.highest(h6, window)
+s7_l = ta.lowest(l7, window),  s7_h = ta.highest(h7, window)
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 10: VERİ YAPILARI, FONKSİYONLAR VE ALARM DEĞİŞKENLERİ
+// ═══════════════════════════════════════════════════════════
+f_in_golden_zone(p, top, bot, is_up) =>
+    if na(top) or na(bot) or top == 0 or bot == 0
+        false
+    else
+        float r = math.abs(top - bot)
+        float max_p = math.max(top, bot)
+        float min_p = math.min(top, bot)
+        float lvl_618 = is_up ? (max_p - 0.618 * r) : (min_p + 0.618 * r)
+        float lvl_886 = is_up ? (max_p - 0.886 * r) : (min_p + 0.886 * r)
+        float max_l = math.max(lvl_618, lvl_886)
+        float min_l = math.min(lvl_618, lvl_886)
+        p <= max_l and p >= min_l
+
+type PivotLow
+    float xau_val
+    int bar_idx
+    bool xau_swept
+    float s1_v
+    bool s1_s
+    float s2_v
+    bool s2_s
+    float s3_v
+    bool s3_s
+    float s4_v
+    bool s4_s
+    float s5_v
+    bool s5_s
+    float s6_v
+    bool s6_s
+    float s7_v
+    bool s7_s
+    int sweep_x
+    float sweep_y
+    line smt_l
+    label smt_lbl
+    bool is_failed
+    int smt_count = 0
+    bool is_armed = false
+    bool is_fib = false
+    bool is_qml = false
+    bool confirmed = false
+    bool ms_aligned = false
+    float entry_price = 0.0
+    bool trade_created = false
+
+type PivotHigh
+    float xau_val
+    int bar_idx
+    bool xau_swept
+    float s1_v
+    bool s1_s
+    float s2_v
+    bool s2_s
+    float s3_v
+    bool s3_s
+    float s4_v
+    bool s4_s
+    float s5_v
+    bool s5_s
+    float s6_v
+    bool s6_s
+    float s7_v
+    bool s7_s
+    int sweep_x
+    float sweep_y
+    line smt_l
+    label smt_lbl
+    bool is_failed
+    int smt_count = 0
+    bool is_armed = false
+    bool is_fib = false
+    bool is_qml = false
+    bool confirmed = false
+    bool ms_aligned = false
+    float entry_price = 0.0
+    bool trade_created = false
+
+type Trade
+    bool is_bull
+    float entry
+    float sl
+    float tp1
+    float tp2
+    bool tp1_hit = false
+    bool tp2_hit = false
+    bool sl_hit = false
+    bool be_active = false
+    bool closed = false
+
+var pivotLows = array.new<PivotLow>()
+var pivotHighs = array.new<PivotHigh>()
+var trades = array.new<Trade>()
+
+var ms_main_zz_arr = array.new<line>()
+var ms_sub_zz_arr = array.new<line>()
+var ms_minor_zz_arr = array.new<line>()
+
+var int bt_total = 0, var int bt_tp1 = 0, var int bt_tp2 = 0
+var int bt_sl = 0, var int bt_be = 0, var float bt_net_r = 0.0
+
+var line bull_sl_ln = na, var line bull_tp1_ln = na, var line bull_tp2_ln = na
+var line bear_sl_ln = na, var line bear_tp1_ln = na, var line bear_tp2_ln = na
+var line bull_entry_ln = na, var line bear_entry_ln = na
+var label bull_sl_lbl = na, var label bull_tp1_lbl = na, var label bull_tp2_lbl = na, var label bull_entry_lbl = na
+var label bear_sl_lbl = na, var label bear_tp1_lbl = na, var label bear_tp2_lbl = na, var label bear_entry_lbl = na
+
+var int ms_main_prev_nsh_t = 0, var int ms_main_prev_nsl_t = 0, var int ms_main_prev_brk_t = 0
+var int ms_sub_prev_nsh_t = 0, var int ms_sub_prev_nsl_t = 0, var int ms_sub_prev_brk_t = 0
+var int ms_minor_prev_nsh_t = 0, var int ms_minor_prev_nsl_t = 0, var int ms_minor_prev_brk_t = 0
+
+var string dash_last_smt = "---"
+var float dash_sl_val = na, var float dash_tp1_val = na, var float dash_tp2_val = na
+var int dash_count = 0, var float dash_entry_val = na
+
+var bool alert_bull_fire = false, var bool alert_bear_fire = false
+alert_bull_fire := false
+alert_bear_fire := false
+var float alert_sl = na
+var float alert_tp = na
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 11: SWING YAKINLIK
+// ═══════════════════════════════════════════════════════════
+check_swing_bull(float price) =>
+    if swingFilter == "Kapalı"
+        true
+    else
+        bool near = false
+        if swingTF != "Orta TF"
+            near := swingFilter == "Sadece Yakınlık" ? ((not na(ms_main_sh) and math.abs(price - ms_main_sh) <= swing_thresh) or (not na(ms_main_sl) and math.abs(price - ms_main_sl) <= swing_thresh)) : (not na(ms_main_sl) and math.abs(price - ms_main_sl) <= swing_thresh)
+        if not near and swingTF != "Ana TF"
+            near := swingFilter == "Sadece Yakınlık" ? ((not na(ms_sub_sh) and math.abs(price - ms_sub_sh) <= swing_thresh) or (not na(ms_sub_sl) and math.abs(price - ms_sub_sl) <= swing_thresh)) : (not na(ms_sub_sl) and math.abs(price - ms_sub_sl) <= swing_thresh)
+        near
+
+check_swing_bear(float price) =>
+    if swingFilter == "Kapalı"
+        true
+    else
+        bool near = false
+        if swingTF != "Orta TF"
+            near := swingFilter == "Sadece Yakınlık" ? ((not na(ms_main_sh) and math.abs(price - ms_main_sh) <= swing_thresh) or (not na(ms_main_sl) and math.abs(price - ms_main_sl) <= swing_thresh)) : (not na(ms_main_sh) and math.abs(price - ms_main_sh) <= swing_thresh)
+        if not near and swingTF != "Ana TF"
+            near := swingFilter == "Sadece Yakınlık" ? ((not na(ms_sub_sh) and math.abs(price - ms_sub_sh) <= swing_thresh) or (not na(ms_sub_sl) and math.abs(price - ms_sub_sl) <= swing_thresh)) : (not na(ms_sub_sh) and math.abs(price - ms_sub_sh) <= swing_thresh)
+        near
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 12: TOOLTIP
+// ═══════════════════════════════════════════════════════════
+get_bull_tooltip(obj, u1, u2, u3, u4, u5, u6, u7) =>
+    string t = ""
+    if obj.xau_swept
+        t += (u1 and not obj.s1_s ? n1 + " " : "") + (u2 and not obj.s2_s ? n2 + " " : "") + (u3 and not obj.s3_s ? n3 + " " : "") + (u4 and not obj.s4_s ? n4 + " " : "") + (u5 and not obj.s5_s ? n5 + " " : "") + (u6 and not obj.s6_s ? n6 + " " : "") + (u7 and not obj.s7_s ? n7 + " " : "")
+    else
+        t += (u1 and obj.s1_s ? n1 + " " : "") + (u2 and obj.s2_s ? n2 + " " : "") + (u3 and obj.s3_s ? n3 + " " : "") + (u4 and obj.s4_s ? n4 + " " : "") + (u5 and obj.s5_s ? n5 + " " : "") + (u6 and obj.s6_s ? n6 + " " : "") + (u7 and obj.s7_s ? n7 + " " : "")
+    t := str.trim(t)
+    t == "" ? " " : t
+
+get_bear_tooltip(obj, u1, u2, u3, u4, u5, u6, u7) =>
+    string t = ""
+    if obj.xau_swept
+        t += (u1 and not obj.s1_s ? n1 + " " : "") + (u2 and not obj.s2_s ? n2 + " " : "") + (u3 and not obj.s3_s ? n3 + " " : "") + (u4 and not obj.s4_s ? n4 + " " : "") + (u5 and not obj.s5_s ? n5 + " " : "") + (u6 and not obj.s6_s ? n6 + " " : "") + (u7 and not obj.s7_s ? n7 + " " : "")
+    else
+        t += (u1 and obj.s1_s ? n1 + " " : "") + (u2 and obj.s2_s ? n2 + " " : "") + (u3 and obj.s3_s ? n3 + " " : "") + (u4 and obj.s4_s ? n4 + " " : "") + (u5 and obj.s5_s ? n5 + " " : "") + (u6 and obj.s6_s ? n6 + " " : "") + (u7 and obj.s7_s ? n7 + " " : "")
+    t := str.trim(t)
+    t == "" ? " " : t
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 13: PİVOT OLUŞTURMA
+// ═══════════════════════════════════════════════════════════
+if not na(pl)
+    int ni = bar_index - rightBars
+    array.push(pivotLows, PivotLow.new(pl, ni, false, s1_l, false, s2_l, false, s3_l, false, s4_l, false, s5_l, false, s6_l, false, s7_l, false, 0, 0.0, line(na), label(na), false))
+    if array.size(pivotLows) > maxPivots
+        array.shift(pivotLows)
+
+if not na(ph)
+    int ni = bar_index - rightBars
+    array.push(pivotHighs, PivotHigh.new(ph, ni, false, s1_h, false, s2_h, false, s3_h, false, s4_h, false, s5_h, false, s6_h, false, s7_h, false, 0, 0.0, line(na), label(na), false))
+    if array.size(pivotHighs) > maxPivots
+        array.shift(pivotHighs)
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 14: BACKTEST TRADE TAKİBİ
+// ═══════════════════════════════════════════════════════════
+if barstate.isconfirmed and array.size(trades) > 0
+    for t_idx = array.size(trades) - 1 to 0
+        Trade t = array.get(trades, t_idx)
+        if t.closed
+            array.remove(trades, t_idx)
+            continue
+        if t.is_bull
+            float sl_limit = t.be_active ? t.entry : t.sl
+            if low <= sl_limit
+                t.closed := true
+                t.sl_hit := true
+                if t.be_active
+                    bt_be += 1
+                    bt_net_r += rrTP1 * 0.5
+                else
+                    bt_sl += 1
+                    bt_net_r -= 1.0
+            else if not t.tp1_hit and high >= t.tp1
+                t.tp1_hit := true
+                bt_tp1 += 1
+                if useBE
+                    t.be_active := true
+                else
+                    t.closed := true
+                    bt_net_r += rrTP1
+            if not t.closed and t.tp1_hit and not t.tp2_hit and high >= t.tp2
+                t.tp2_hit := true
+                t.closed := true
+                bt_net_r += rrTP2 * 0.5
+        else
+            float sl_limit = t.be_active ? t.entry : t.sl
+            if high >= sl_limit
+                t.closed := true
+                t.sl_hit := true
+                if t.be_active
+                    bt_be += 1
+                    bt_net_r += rrTP1 * 0.5
+                else
+                    bt_sl += 1
+                    bt_net_r -= 1.0
+            else if not t.tp1_hit and low <= t.tp1
+                t.tp1_hit := true
+                bt_tp1 += 1
+                if useBE
+                    t.be_active := true
+                else
+                    t.closed := true
+                    bt_net_r += rrTP1
+            if not t.closed and t.tp1_hit and not t.tp2_hit and low <= t.tp2
+                t.tp2_hit := true
+                t.closed := true
+                bt_net_r += rrTP2 * 0.5
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 15: ANA MOTOR — BİRLEŞİK PAS
+// ═══════════════════════════════════════════════════════════
+if barstate.isconfirmed
+
+    // ─── BOĞA SMT ─────────────────────────────────────────
+    int bull_drawn = 0
+    if array.size(pivotLows) > 0
+        for idx = array.size(pivotLows) - 1 to 0
+            PivotLow obj = array.get(pivotLows, idx)
+
+            if (bar_index - obj.bar_idx) > maxBarsBack
+                line.delete(obj.smt_l)
+                label.delete(obj.smt_lbl)
+                array.remove(pivotLows, idx)
+                continue
+
+            // SWEEP
+            if low < obj.xau_val and not obj.xau_swept
+                obj.xau_swept := true
+                obj.sweep_x := bar_index
+                obj.sweep_y := low
+            if use1 and l1 < obj.s1_v
+                obj.s1_s := true
+            if use2 and l2 < obj.s2_v
+                obj.s2_s := true
+            if use3 and l3 < obj.s3_v
+                obj.s3_s := true
+            if use4 and l4 < obj.s4_v
+                obj.s4_s := true
+            if use5 and l5 < obj.s5_v
+                obj.s5_s := true
+            if use6 and l6 < obj.s6_v
+                obj.s6_s := true
+            if use7 and l7 < obj.s7_v
+                obj.s7_s := true
+
+            bool any_swept = obj.xau_swept or obj.s1_s or obj.s2_s or obj.s3_s or obj.s4_s or obj.s5_s or obj.s6_s or obj.s7_s
+            if any_swept and obj.sweep_x == 0
+                obj.sweep_x := bar_index
+                obj.sweep_y := low
+
+            bool all_k = obj.xau_swept and (not use1 or obj.s1_s) and (not use2 or obj.s2_s) and (not use3 or obj.s3_s) and (not use4 or obj.s4_s) and (not use5 or obj.s5_s) and (not use6 or obj.s6_s) and (not use7 or obj.s7_s)
+            if all_k
+                obj.is_failed := true
+
+            // ONAY & STATE MACHINE
+            if obj.sweep_x != 0 and not obj.confirmed and not obj.is_failed
+                int cnt = 0
+                if obj.xau_swept
+                    cnt += (use1 and not obj.s1_s ? 1 : 0) + (use2 and not obj.s2_s ? 1 : 0) + (use3 and not obj.s3_s ? 1 : 0) + (use4 and not obj.s4_s ? 1 : 0) + (use5 and not obj.s5_s ? 1 : 0) + (use6 and not obj.s6_s ? 1 : 0) + (use7 and not obj.s7_s ? 1 : 0)
+                else
+                    cnt += (use1 and obj.s1_s ? 1 : 0) + (use2 and obj.s2_s ? 1 : 0) + (use3 and obj.s3_s ? 1 : 0) + (use4 and obj.s4_s ? 1 : 0) + (use5 and obj.s5_s ? 1 : 0) + (use6 and obj.s6_s ? 1 : 0) + (use7 and obj.s7_s ? 1 : 0)
+                obj.smt_count := cnt
+                obj.ms_aligned := bull_ms_ok
+
+                if not obj.is_armed
+                    bool swing_ok = check_swing_bull(obj.sweep_y)
+                    bool extra_ok = fib_bull_ok and rsi_bull_ok and ao_bull_ok and sess_ok
+                    
+                    bool in_fib_z = false
+                    if sigUseFibConf
+                        in_fib_z := f_in_golden_zone(obj.sweep_y, f3_l_t, f3_l_b, ms_main_bias == 1) or f_in_golden_zone(obj.sweep_y, f3_b_t, f3_b_b, ms_main_bias == 1) or f_in_golden_zone(obj.sweep_y, f2_l_t, f2_l_b, ms_sub_bias == 1) or f_in_golden_zone(obj.sweep_y, f2_b_t, f2_b_b, ms_sub_bias == 1) or f_in_golden_zone(obj.sweep_y, fm3_p1, fm3_p2, true) or f_in_golden_zone(obj.sweep_y, fm2_p1, fm2_p2, true)
+                        
+                    bool in_qml_z = false
+                    if sigUseQML
+                        float closest_qml = f_get_closest_valid_qml(obj.sweep_y, true)
+                        if not na(closest_qml) and math.abs(obj.sweep_y - closest_qml) <= swing_thresh
+                            in_qml_z := true
+                            
+                    if sigUseFibConf and sigUseQML
+                        if not (in_fib_z or in_qml_z)
+                            extra_ok := false
+                    else if sigUseFibConf and not in_fib_z
+                        extra_ok := false
+                    else if sigUseQML and not in_qml_z
+                        extra_ok := false
+                    
+                    if in_fib_z
+                        obj.is_fib := true
+                    if in_qml_z
+                        obj.is_qml := true
+                        
+                    if swing_ok and extra_ok and cnt >= minSmtCount
+                        obj.is_armed := true
+
+                if obj.is_armed
+                    if sigReqChoch
+                        if ms1_brk == 1 // Minör TF CHoCH onayı
+                            obj.confirmed := true
+                            obj.entry_price := close
+                    else
+                        if useConfirm
+                            int bars_since = bar_index - obj.sweep_x
+                            if bars_since >= 0 and bars_since <= confirmBars
+                                bool pair_ok = false
+                                if obj.xau_swept
+                                    pair_ok := (use1 and not obj.s1_s and c1 > o1) or (use2 and not obj.s2_s and c2 > o2) or (use3 and not obj.s3_s and c3 > o3) or (use4 and not obj.s4_s and c4 > o4) or (use5 and not obj.s5_s and c5 > o5) or (use6 and not obj.s6_s and c6 > o6) or (use7 and not obj.s7_s and c7 > o7)
+                                else
+                                    pair_ok := (use1 and obj.s1_s and c1 > o1) or (use2 and obj.s2_s and c2 > o2) or (use3 and obj.s3_s and c3 > o3) or (use4 and obj.s4_s and c4 > o4) or (use5 and obj.s5_s and c5 > o5) or (use6 and obj.s6_s and c6 > o6) or (use7 and obj.s7_s and c7 > o7)
+                                
+                                if xau_bull_candle and pair_ok
+                                    obj.confirmed := true
+                                    obj.entry_price := close
+                        else
+                            obj.confirmed := true
+                            obj.entry_price := close
+                        
+                if obj.confirmed and not obj.trade_created
+                    obj.trade_created := true
+                    float e = obj.entry_price
+                    float s = usePivotSL ? math.min(e - my_atr * atrMultSL, obj.sweep_y) : e - my_atr * atrMultSL
+                    float r = math.max(e - s, syminfo.mintick)
+                    
+                    float t1 = e + r * rrTP1
+                    float t2 = e + r * rrTP2
+                    if tpMode == "Dinamik Fib Extension" and not na(f1_l_t) and not na(f1_l_b)
+                        float local_r = math.abs(f1_l_t - f1_l_b)
+                        float local_high = math.max(f1_l_t, f1_l_b)
+                        t1 := local_high - dynTp1Lvl * local_r
+                        t2 := local_high - dynTp2Lvl * local_r
+                    else if tpMode == "Karşıt QML Hedefi"
+                        float target_tp = f_get_closest_valid_qml(e, false) // Bullish işlem için Bearish (Yukarıdaki) QML aranır
+                        if not na(target_tp)
+                            t1 := target_tp
+                            t2 := target_tp + (target_tp - e) * 0.5
+                        
+                    array.push(trades, Trade.new(true, e, s, t1, t2))
+                    bt_total += 1
+                    
+                    alert_bull_fire := true
+                    alert_sl := s
+                    alert_tp := t1
+
+            // ÇİZİM
+            if obj.is_failed and not showFailed
+                if not na(obj.smt_l)
+                    line.delete(obj.smt_l)
+                    label.delete(obj.smt_lbl)
+                    obj.smt_l := na
+                    obj.smt_lbl := na
+                continue
+            if not any_swept
+                continue
+
+            string tool_txt = get_bull_tooltip(obj, use1, use2, use3, use4, use5, use6, use7)
+            if tool_txt == " "
+                continue
+
+            bool ms_block = msFilterSMT and showMS and not obj.ms_aligned
+            bool confirm_block = useConfirm and not obj.confirmed and obj.sweep_x != 0 and (bar_index - obj.sweep_x) > confirmBars
+            bool swing_block = swingFilter != "Kapalı" and not check_swing_bull(obj.sweep_y)
+
+            if ms_block or confirm_block or swing_block
+                if not na(obj.smt_l)
+                    line.delete(obj.smt_l)
+                    label.delete(obj.smt_lbl)
+                    obj.smt_l := na
+                    obj.smt_lbl := na
+                continue
+
+            if bull_drawn < maxSmtLines
+                string status = useConfirm ? (obj.confirmed ? " ✓" : " ⏳") : ""
+                string strength = totalActive > 1 ? " (" + str.tostring(obj.smt_count) + "/" + str.tostring(totalActive) + ")" : ""
+                string lbl_txt = "BULL" + status + strength
+
+                string full_tip = tool_txt
+                if showMS
+                    full_tip += "\n─────\nMS " + msTF_main + ": " + (ms_main_bias == 1 ? "BULLISH" : ms_main_bias == -1 ? "BEARISH" : "---")
+                    if msMode != "Tek Katman"
+                        full_tip += "\nMS " + msTF_sub + ": " + (ms_sub_bias == 1 ? "BULLISH" : ms_sub_bias == -1 ? "BEARISH" : "---")
+                if rsiFilter != "Kapalı"
+                    full_tip += "\nRSI: " + str.tostring(rsi_val, "#.#")
+                if aoFilter != "Kapalı"
+                    full_tip += "\nAO: " + str.tostring(ao_val, "#.##")
+                if obj.is_qml
+                    full_tip += "\n⚡ QML Zone"
+                if obj.is_fib
+                    full_tip += "\n✨ Fib Golden Zone"
+
+                float lbl_y = obj.sweep_y - (my_atr * labelOffset)
+                color cur_clr = obj.confirmed or not useConfirm ? bullLabelColor : color.rgb(255, 165, 0, 50)
+
+                if na(obj.smt_l)
+                    obj.smt_l := line.new(x1=obj.bar_idx, y1=obj.xau_val, x2=obj.sweep_x, y2=obj.sweep_y, xloc=xloc.bar_index, color=bullLineColor, style=line.style_solid)
+                    line.set_width(obj.smt_l, smtLineWidth)
+                    obj.smt_lbl := label.new(x=obj.sweep_x, y=lbl_y, text=lbl_txt, xloc=xloc.bar_index, color=cur_clr, textcolor=labelTextColor, style=label.style_label_up, size=size.small, tooltip=full_tip)
+                else
+                    line.set_xy1(obj.smt_l, obj.bar_idx, obj.xau_val)
+                    line.set_xy2(obj.smt_l, obj.sweep_x, obj.sweep_y)
+                    label.set_xy(obj.smt_lbl, obj.sweep_x, lbl_y)
+                    label.set_text(obj.smt_lbl, lbl_txt)
+                    label.set_tooltip(obj.smt_lbl, full_tip)
+                    label.set_color(obj.smt_lbl, cur_clr)
+                bull_drawn += 1
+            else
+                if not na(obj.smt_l)
+                    line.delete(obj.smt_l)
+                    label.delete(obj.smt_lbl)
+                    obj.smt_l := na
+                    obj.smt_lbl := na
+
+    // ─── AYI SMT ──────────────────────────────────────────
+    int bear_drawn = 0
+    if array.size(pivotHighs) > 0
+        for idx = array.size(pivotHighs) - 1 to 0
+            PivotHigh obj = array.get(pivotHighs, idx)
+
+            if (bar_index - obj.bar_idx) > maxBarsBack
+                line.delete(obj.smt_l)
+                label.delete(obj.smt_lbl)
+                array.remove(pivotHighs, idx)
+                continue
+
+            if high > obj.xau_val and not obj.xau_swept
+                obj.xau_swept := true
+                obj.sweep_x := bar_index
+                obj.sweep_y := high
+            if use1 and h1 > obj.s1_v
+                obj.s1_s := true
+            if use2 and h2 > obj.s2_v
+                obj.s2_s := true
+            if use3 and h3 > obj.s3_v
+                obj.s3_s := true
+            if use4 and h4 > obj.s4_v
+                obj.s4_s := true
+            if use5 and h5 > obj.s5_v
+                obj.s5_s := true
+            if use6 and h6 > obj.s6_v
+                obj.s6_s := true
+            if use7 and h7 > obj.s7_v
+                obj.s7_s := true
+
+            bool any_swept = obj.xau_swept or obj.s1_s or obj.s2_s or obj.s3_s or obj.s4_s or obj.s5_s or obj.s6_s or obj.s7_s
+            if any_swept and obj.sweep_x == 0
+                obj.sweep_x := bar_index
+                obj.sweep_y := high
+
+            bool all_k = obj.xau_swept and (not use1 or obj.s1_s) and (not use2 or obj.s2_s) and (not use3 or obj.s3_s) and (not use4 or obj.s4_s) and (not use5 or obj.s5_s) and (not use6 or obj.s6_s) and (not use7 or obj.s7_s)
+            if all_k
+                obj.is_failed := true
+
+            if obj.sweep_x != 0 and not obj.confirmed and not obj.is_failed
+                int cnt = 0
+                if obj.xau_swept
+                    cnt += (use1 and not obj.s1_s ? 1 : 0) + (use2 and not obj.s2_s ? 1 : 0) + (use3 and not obj.s3_s ? 1 : 0) + (use4 and not obj.s4_s ? 1 : 0) + (use5 and not obj.s5_s ? 1 : 0) + (use6 and not obj.s6_s ? 1 : 0) + (use7 and not obj.s7_s ? 1 : 0)
+                else
+                    cnt += (use1 and obj.s1_s ? 1 : 0) + (use2 and obj.s2_s ? 1 : 0) + (use3 and obj.s3_s ? 1 : 0) + (use4 and obj.s4_s ? 1 : 0) + (use5 and obj.s5_s ? 1 : 0) + (use6 and obj.s6_s ? 1 : 0) + (use7 and obj.s7_s ? 1 : 0)
+                obj.smt_count := cnt
+                obj.ms_aligned := bear_ms_ok
+
+                if not obj.is_armed
+                    bool swing_ok = check_swing_bear(obj.sweep_y)
+                    bool extra_ok = fib_bear_ok and rsi_bear_ok and ao_bear_ok and sess_ok
+
+                    bool in_fib_z = false
+                    if sigUseFibConf
+                        in_fib_z := f_in_golden_zone(obj.sweep_y, f3_l_t, f3_l_b, ms_main_bias == -1) or f_in_golden_zone(obj.sweep_y, f3_b_t, f3_b_b, ms_main_bias == -1) or f_in_golden_zone(obj.sweep_y, f2_l_t, f2_l_b, ms_sub_bias == -1) or f_in_golden_zone(obj.sweep_y, f2_b_t, f2_b_b, ms_sub_bias == -1) or f_in_golden_zone(obj.sweep_y, fm3_p1, fm3_p2, false) or f_in_golden_zone(obj.sweep_y, fm2_p1, fm2_p2, false)
+                        
+                    bool in_qml_z = false
+                    if sigUseQML
+                        float closest_qml = f_get_closest_valid_qml(obj.sweep_y, false)
+                        if not na(closest_qml) and math.abs(obj.sweep_y - closest_qml) <= swing_thresh
+                            in_qml_z := true
+                            
+                    if sigUseFibConf and sigUseQML
+                        if not (in_fib_z or in_qml_z)
+                            extra_ok := false
+                    else if sigUseFibConf and not in_fib_z
+                        extra_ok := false
+                    else if sigUseQML and not in_qml_z
+                        extra_ok := false
+                    if in_fib_z
+                        obj.is_fib := true
+                    if in_qml_z
+                        obj.is_qml := true
+                        
+                    if swing_ok and extra_ok and cnt >= minSmtCount
+                        obj.is_armed := true
+
+                if obj.is_armed
+                    if sigReqChoch
+                        if ms1_brk == -1 // Minör TF CHoCH onayı (Aşağı Kırılım)
+                            obj.confirmed := true
+                            obj.entry_price := close
+                    else
+                        if useConfirm
+                            int bars_since = bar_index - obj.sweep_x
+                            if bars_since >= 0 and bars_since <= confirmBars
+                                bool pair_ok = false
+                                if obj.xau_swept
+                                    pair_ok := (use1 and not obj.s1_s and c1 < o1) or (use2 and not obj.s2_s and c2 < o2) or (use3 and not obj.s3_s and c3 < o3) or (use4 and not obj.s4_s and c4 < o4) or (use5 and not obj.s5_s and c5 < o5) or (use6 and not obj.s6_s and c6 < o6) or (use7 and not obj.s7_s and c7 < o7)
+                                else
+                                    pair_ok := (use1 and obj.s1_s and c1 < o1) or (use2 and obj.s2_s and c2 < o2) or (use3 and obj.s3_s and c3 < o3) or (use4 and obj.s4_s and c4 < o4) or (use5 and obj.s5_s and c5 < o5) or (use6 and obj.s6_s and c6 < o6) or (use7 and obj.s7_s and c7 < o7)
+                                
+                                if xau_bear_candle and pair_ok
+                                    obj.confirmed := true
+                                    obj.entry_price := close
+                        else
+                            obj.confirmed := true
+                            obj.entry_price := close
+
+                if obj.confirmed and not obj.trade_created
+                    obj.trade_created := true
+                    float e = obj.entry_price
+                    float s = usePivotSL ? math.max(e + my_atr * atrMultSL, obj.sweep_y) : e + my_atr * atrMultSL
+                    float r = math.max(s - e, syminfo.mintick)
+                    
+                    float t1 = e - r * rrTP1
+                    float t2 = e - r * rrTP2
+                    if tpMode == "Dinamik Fib Extension" and not na(f1_l_t) and not na(f1_l_b)
+                        float local_r = math.abs(f1_l_t - f1_l_b)
+                        float local_low = math.min(f1_l_t, f1_l_b)
+                        t1 := local_low + dynTp1Lvl * local_r
+                        t2 := local_low + dynTp2Lvl * local_r
+                    else if tpMode == "Karşıt QML Hedefi"
+                        float target_tp = f_get_closest_valid_qml(e, true) // Bearish işlem için Bullish (Aşağıdaki) QML aranır
+                        if not na(target_tp)
+                            t1 := target_tp
+                            t2 := target_tp - (e - target_tp) * 0.5
+                        
+                    array.push(trades, Trade.new(false, e, s, t1, t2))
+                    bt_total += 1
+                    
+                    alert_bear_fire := true
+                    alert_sl := s
+                    alert_tp := t1
+
+            if obj.is_failed and not showFailed
+                if not na(obj.smt_l)
+                    line.delete(obj.smt_l)
+                    label.delete(obj.smt_lbl)
+                    obj.smt_l := na
+                    obj.smt_lbl := na
+                continue
+            if not any_swept
+                continue
+
+            string tool_txt = get_bear_tooltip(obj, use1, use2, use3, use4, use5, use6, use7)
+            if tool_txt == " "
+                continue
+
+            bool ms_block = msFilterSMT and showMS and not obj.ms_aligned
+            bool confirm_block = useConfirm and not obj.confirmed and obj.sweep_x != 0 and (bar_index - obj.sweep_x) > confirmBars
+            bool swing_block = swingFilter != "Kapalı" and not check_swing_bear(obj.sweep_y)
+
+            if ms_block or confirm_block or swing_block
+                if not na(obj.smt_l)
+                    line.delete(obj.smt_l)
+                    label.delete(obj.smt_lbl)
+                    obj.smt_l := na
+                    obj.smt_lbl := na
+                continue
+
+            if bear_drawn < maxSmtLines
+                string status = useConfirm ? (obj.confirmed ? " ✓" : " ⏳") : ""
+                string strength = totalActive > 1 ? " (" + str.tostring(obj.smt_count) + "/" + str.tostring(totalActive) + ")" : ""
+                string lbl_txt = "BEAR" + status + strength
+
+                string full_tip = tool_txt
+                if showMS
+                    full_tip += "\n─────\nMS " + msTF_main + ": " + (ms_main_bias == 1 ? "BULLISH" : ms_main_bias == -1 ? "BEARISH" : "---")
+                    if msMode != "Tek Katman"
+                        full_tip += "\nMS " + msTF_sub + ": " + (ms_sub_bias == 1 ? "BULLISH" : ms_sub_bias == -1 ? "BEARISH" : "---")
+                if rsiFilter != "Kapalı"
+                    full_tip += "\nRSI: " + str.tostring(rsi_val, "#.#")
+                if aoFilter != "Kapalı"
+                    full_tip += "\nAO: " + str.tostring(ao_val, "#.##")
+                if obj.is_qml
+                    full_tip += "\n⚡ QML Zone"
+                if obj.is_fib
+                    full_tip += "\n✨ Fib Golden Zone"
+
+                float lbl_y = obj.sweep_y + (my_atr * labelOffset)
+                color cur_clr = obj.confirmed or not useConfirm ? bearLabelColor : color.rgb(255, 165, 0, 50)
+
+                if na(obj.smt_l)
+                    obj.smt_l := line.new(x1=obj.bar_idx, y1=obj.xau_val, x2=obj.sweep_x, y2=obj.sweep_y, xloc=xloc.bar_index, color=bearLineColor, style=line.style_solid)
+                    line.set_width(obj.smt_l, smtLineWidth)
+                    obj.smt_lbl := label.new(x=obj.sweep_x, y=lbl_y, text=lbl_txt, xloc=xloc.bar_index, color=cur_clr, textcolor=labelTextColor, style=label.style_label_down, size=size.small, tooltip=full_tip)
+                else
+                    line.set_xy1(obj.smt_l, obj.bar_idx, obj.xau_val)
+                    line.set_xy2(obj.smt_l, obj.sweep_x, obj.sweep_y)
+                    label.set_xy(obj.smt_lbl, obj.sweep_x, lbl_y)
+                    label.set_text(obj.smt_lbl, lbl_txt)
+                    label.set_tooltip(obj.smt_lbl, full_tip)
+                    label.set_color(obj.smt_lbl, cur_clr)
+                bear_drawn += 1
+            else
+                if not na(obj.smt_l)
+                    line.delete(obj.smt_l)
+                    label.delete(obj.smt_lbl)
+                    obj.smt_l := na
+                    obj.smt_lbl := na
+
+    // ─── MARKET YAPISI ÇİZİMİ ─────────────────────────────
+    if showMS
+        if showZigzag or showSwingLabels
+            if not na(ms_main_nsh) and nz(ms_main_nsh_t) != ms_main_prev_nsh_t and not na(ms_main_sl)
+                if showZigzag
+                    line ln_main_bull = line.new(x1=int(ms_main_sl_t), y1=ms_main_sl, x2=int(ms_main_nsh_t), y2=ms_main_nsh, xloc=xloc.bar_time, color=msBullColor, style=line.style_solid)
+                    line.set_width(ln_main_bull, 2)
+                    array.push(ms_main_zz_arr, ln_main_bull)
+                    if array.size(ms_main_zz_arr) > 25
+                        line.delete(array.shift(ms_main_zz_arr))
+                ms_main_prev_nsh_t := int(ms_main_nsh_t)
+                if showSwingLabels
+                    string sh_lbl = ms_main_stype == 2 ? "HH" : "LH"
+                    label.new(x=int(ms_main_nsh_t), y=ms_main_nsh, text=sh_lbl, xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=msBullColor, style=label.style_label_down, size=swing_lbl_sz)
+            
+            if not na(ms_main_nsl) and nz(ms_main_nsl_t) != ms_main_prev_nsl_t and not na(ms_main_sh)
+                if showZigzag
+                    line ln_main_bear = line.new(x1=int(ms_main_sh_t), y1=ms_main_sh, x2=int(ms_main_nsl_t), y2=ms_main_nsl, xloc=xloc.bar_time, color=msBearColor, style=line.style_solid)
+                    line.set_width(ln_main_bear, 2)
+                    array.push(ms_main_zz_arr, ln_main_bear)
+                    if array.size(ms_main_zz_arr) > 25
+                        line.delete(array.shift(ms_main_zz_arr))
+                ms_main_prev_nsl_t := int(ms_main_nsl_t)
+                if showSwingLabels
+                    string sl_lbl = ms_main_stype == -2 ? "LL" : "HL"
+                    label.new(x=int(ms_main_nsl_t), y=ms_main_nsl, text=sl_lbl, xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=msBearColor, style=label.style_label_up, size=swing_lbl_sz)
+
+        if showBosChoch and ms_main_brk != 0 and nz(ms_main_brk_t) != ms_main_prev_brk_t
+            ms_main_prev_brk_t := int(ms_main_brk_t)
+            bool ib = ms_main_brk > 0
+            bool ic = math.abs(ms_main_brk) == 2
+            color bc = ib ? msBullColor : msBearColor
+            line l1_bos = line.new(x1=int(ms_main_brk_t), y1=ms_main_brk_lvl, x2=int(time), y2=ms_main_brk_lvl, xloc=xloc.bar_time, color=bc, style=line.style_dashed)
+            line.set_width(l1_bos, 1)
+            label.new(x=int(math.avg(ms_main_brk_t, time)), y=ms_main_brk_lvl, text=(ic ? "CHoCH" : "BOS") + " " + msTF_main, xloc=xloc.bar_time, color=color.new(color.black, 85), textcolor=bc, style=ib ? label.style_label_down : label.style_label_up, size=bos_main_sz)
+
+        if msMode != "Tek Katman"
+            if showZigzag or showSwingLabels
+                if not na(ms_sub_nsh) and nz(ms_sub_nsh_t) != ms_sub_prev_nsh_t and not na(ms_sub_sl)
+                    if showZigzag
+                        line ln_sub_bull = line.new(x1=int(ms_sub_sl_t), y1=ms_sub_sl, x2=int(ms_sub_nsh_t), y2=ms_sub_nsh, xloc=xloc.bar_time, color=msBullColor, style=line.style_dotted)
+                        line.set_width(ln_sub_bull, 1)
+                        array.push(ms_sub_zz_arr, ln_sub_bull)
+                        if array.size(ms_sub_zz_arr) > 25
+                            line.delete(array.shift(ms_sub_zz_arr))
+                    ms_sub_prev_nsh_t := int(ms_sub_nsh_t)
+                    if showSwingLabels
+                        string sh_lbl2 = ms_sub_stype == 2 ? "HH" : "LH"
+                        label.new(x=int(ms_sub_nsh_t), y=ms_sub_nsh, text=sh_lbl2 + " " + msTF_sub, xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=color.new(msBullColor, 30), style=label.style_label_down, size=bos_sub_sz)
+                
+                if not na(ms_sub_nsl) and nz(ms_sub_nsl_t) != ms_sub_prev_nsl_t and not na(ms_sub_sh)
+                    if showZigzag
+                        line ln_sub_bear = line.new(x1=int(ms_sub_sh_t), y1=ms_sub_sh, x2=int(ms_sub_nsl_t), y2=ms_sub_nsl, xloc=xloc.bar_time, color=msBearColor, style=line.style_dotted)
+                        line.set_width(ln_sub_bear, 1)
+                        array.push(ms_sub_zz_arr, ln_sub_bear)
+                        if array.size(ms_sub_zz_arr) > 25
+                            line.delete(array.shift(ms_sub_zz_arr))
+                    ms_sub_prev_nsl_t := int(ms_sub_nsl_t)
+                    if showSwingLabels
+                        string sl_lbl2 = ms_sub_stype == -2 ? "LL" : "HL"
+                        label.new(x=int(ms_sub_nsl_t), y=ms_sub_nsl, text=sl_lbl2 + " " + msTF_sub, xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=color.new(msBearColor, 30), style=label.style_label_up, size=bos_sub_sz)
+
+            if showBosChoch and ms_sub_brk != 0 and nz(ms_sub_brk_t) != ms_sub_prev_brk_t
+                ms_sub_prev_brk_t := int(ms_sub_brk_t)
+                bool ib2 = ms_sub_brk > 0
+                bool ic2 = math.abs(ms_sub_brk) == 2
+                color bc2 = ib2 ? msBullColor : msBearColor
+                line l2_bos = line.new(x1=int(ms_sub_brk_t), y1=ms_sub_brk_lvl, x2=int(time), y2=ms_sub_brk_lvl, xloc=xloc.bar_time, color=bc2, style=line.style_dotted)
+                line.set_width(l2_bos, 1)
+                label.new(x=int(math.avg(ms_sub_brk_t, time)), y=ms_sub_brk_lvl, text=(ic2 ? "CHoCH" : "BOS") + " " + msTF_sub, xloc=xloc.bar_time, color=color.new(color.black, 85), textcolor=bc2, style=ib2 ? label.style_label_down : label.style_label_up, size=bos_sub_sz)
+
+        if msMode == "Üçlü Katman"
+            if showZigzag or showSwingLabels
+                if not na(ms1_nsh) and nz(ms1_nsh_t) != ms_minor_prev_nsh_t and not na(ms1_sl)
+                    if showZigzag
+                        line ln_minor_bull = line.new(x1=int(ms1_sl_t), y1=ms1_sl, x2=int(ms1_nsh_t), y2=ms1_nsh, xloc=xloc.bar_time, color=color.new(msBullColor, 30), style=line.style_dotted)
+                        line.set_width(ln_minor_bull, 1)
+                        array.push(ms_minor_zz_arr, ln_minor_bull)
+                        if array.size(ms_minor_zz_arr) > 25
+                            line.delete(array.shift(ms_minor_zz_arr))
+                    ms_minor_prev_nsh_t := int(ms1_nsh_t)
+                    if showSwingLabels
+                        string sh_lbl3 = ms1_stype == 2 ? "HH" : "LH"
+                        label.new(x=int(ms1_nsh_t), y=ms1_nsh, text=sh_lbl3 + " " + msTF_minor, xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=color.new(msBullColor, 50), style=label.style_label_down, size=bos_sub_sz)
+                
+                if not na(ms1_nsl) and nz(ms1_nsl_t) != ms_minor_prev_nsl_t and not na(ms1_sh)
+                    if showZigzag
+                        line ln_minor_bear = line.new(x1=int(ms1_sh_t), y1=ms1_sh, x2=int(ms1_nsl_t), y2=ms1_nsl, xloc=xloc.bar_time, color=color.new(msBearColor, 30), style=line.style_dotted)
+                        line.set_width(ln_minor_bear, 1)
+                        array.push(ms_minor_zz_arr, ln_minor_bear)
+                        if array.size(ms_minor_zz_arr) > 25
+                            line.delete(array.shift(ms_minor_zz_arr))
+                    ms_minor_prev_nsl_t := int(ms1_nsl_t)
+                    if showSwingLabels
+                        string sl_lbl3 = ms1_stype == -2 ? "LL" : "HL"
+                        label.new(x=int(ms1_nsl_t), y=ms1_nsl, text=sl_lbl3 + " " + msTF_minor, xloc=xloc.bar_time, color=color.new(color.black, 100), textcolor=color.new(msBearColor, 50), style=label.style_label_up, size=bos_sub_sz)
+
+            if showBosChoch and ms1_brk != 0 and nz(ms1_brk_t) != ms_minor_prev_brk_t
+                ms_minor_prev_brk_t := int(ms1_brk_t)
+                bool ib3 = ms1_brk > 0
+                bool ic3 = math.abs(ms1_brk) == 2
+                color bc3 = ib3 ? color.new(msBullColor, 30) : color.new(msBearColor, 30)
+                line l3_bos = line.new(x1=int(ms1_brk_t), y1=ms1_brk_lvl, x2=int(time), y2=ms1_brk_lvl, xloc=xloc.bar_time, color=bc3, style=line.style_dotted)
+                line.set_width(l3_bos, 1)
+                label.new(x=int(math.avg(ms1_brk_t, time)), y=ms1_brk_lvl, text=(ic3 ? "CHoCH" : "BOS") + " " + msTF_minor, xloc=xloc.bar_time, color=color.new(color.black, 85), textcolor=bc3, style=ib3 ? label.style_label_down : label.style_label_up, size=bos_sub_sz)
+
+
+    // ─── SL / TP ÇİZİMİ + ETİKETLER ──────────────────────
+    if showSLTP
+        line.delete(bull_sl_ln), line.delete(bull_tp1_ln), line.delete(bull_tp2_ln), line.delete(bull_entry_ln)
+        label.delete(bull_sl_lbl), label.delete(bull_tp1_lbl), label.delete(bull_tp2_lbl), label.delete(bull_entry_lbl)
+        line.delete(bear_sl_ln), line.delete(bear_tp1_ln), line.delete(bear_tp2_ln), line.delete(bear_entry_ln)
+        label.delete(bear_sl_lbl), label.delete(bear_tp1_lbl), label.delete(bear_tp2_lbl), label.delete(bear_entry_lbl)
+        bull_sl_ln := na, bull_tp1_ln := na, bull_tp2_ln := na, bull_entry_ln := na
+        bear_sl_ln := na, bear_tp1_ln := na, bear_tp2_ln := na, bear_entry_ln := na
+
+        bool found_bull = false
+        if array.size(pivotLows) > 0
+            for i = array.size(pivotLows) - 1 to 0
+                if not found_bull
+                    PivotLow otp = array.get(pivotLows, i)
+                    if otp.confirmed and otp.entry_price > 0
+                        found_bull := true
+                        float eb = otp.entry_price
+                        float sb = usePivotSL ? math.min(eb - my_atr * atrMultSL, otp.sweep_y) : eb - my_atr * atrMultSL
+                        float rb = math.max(eb - sb, syminfo.mintick)
+                        float tp1b = eb + rb * rrTP1
+                        float tp2b = eb + rb * rrTP2
+                        int x1 = int(otp.sweep_x + sltpOffsetBars)
+                        int x2 = int(bar_index + sltpExtendBars)
+
+                        bull_entry_ln := line.new(x1=x1, y1=eb, x2=x2, y2=eb, xloc=xloc.bar_index, color=style_entry_color, style=line.style_solid)
+                        line.set_width(bull_entry_ln, style_sltp_width)
+                        bull_sl_ln := line.new(x1=x1, y1=sb, x2=x2, y2=sb, xloc=xloc.bar_index, color=style_sl_color, style=sltp_ls)
+                        line.set_width(bull_sl_ln, style_sltp_width)
+                        bull_tp1_ln := line.new(x1=x1, y1=tp1b, x2=x2, y2=tp1b, xloc=xloc.bar_index, color=style_tp1_color, style=sltp_ls)
+                        line.set_width(bull_tp1_ln, style_sltp_width)
+                        bull_tp2_ln := line.new(x1=x1, y1=tp2b, x2=x2, y2=tp2b, xloc=xloc.bar_index, color=style_tp2_color, style=sltp_ls)
+                        line.set_width(bull_tp2_ln, style_sltp_width)
+
+                        bull_entry_lbl := label.new(x=x2, y=eb, text="ENTRY " + str.tostring(eb, "#.##"), xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.blue, 85), textcolor=style_entry_color, size=sltp_lbl_sz)
+                        bull_sl_lbl := label.new(x=x2, y=sb, text="SL " + str.tostring(sb, "#.##"), xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.red, 85), textcolor=style_sl_color, size=sltp_lbl_sz)
+                        bull_tp1_lbl := label.new(x=x2, y=tp1b, text="TP1 " + str.tostring(tp1b, "#.##") + " [" + str.tostring(rrTP1, "#.#") + "R]", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.green, 85), textcolor=style_tp1_color, size=sltp_lbl_sz)
+                        bull_tp2_lbl := label.new(x=x2, y=tp2b, text="TP2 " + str.tostring(tp2b, "#.##") + " [" + str.tostring(rrTP2, "#.#") + "R]", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.green, 85), textcolor=style_tp2_color, size=sltp_lbl_sz)
+
+                        dash_last_smt := "BULL ✓"
+                        dash_entry_val := eb
+                        dash_sl_val := sb
+                        dash_tp1_val := tp1b
+                        dash_tp2_val := tp2b
+                        dash_count := otp.smt_count
+
+        bool found_bear = false
+        if array.size(pivotHighs) > 0
+            for i = array.size(pivotHighs) - 1 to 0
+                if not found_bear
+                    PivotHigh otp = array.get(pivotHighs, i)
+                    if otp.confirmed and otp.entry_price > 0
+                        found_bear := true
+                        float es = otp.entry_price
+                        float ss = usePivotSL ? math.max(es + my_atr * atrMultSL, otp.sweep_y) : es + my_atr * atrMultSL
+                        float rs = math.max(ss - es, syminfo.mintick)
+                        float tp1s = es - rs * rrTP1
+                        float tp2s = es - rs * rrTP2
+                        int x1 = int(otp.sweep_x + sltpOffsetBars)
+                        int x2 = int(bar_index + sltpExtendBars)
+
+                        bear_entry_ln := line.new(x1=x1, y1=es, x2=x2, y2=es, xloc=xloc.bar_index, color=style_entry_color, style=line.style_solid)
+                        line.set_width(bear_entry_ln, style_sltp_width)
+                        bear_sl_ln := line.new(x1=x1, y1=ss, x2=x2, y2=ss, xloc=xloc.bar_index, color=style_sl_color, style=sltp_ls)
+                        line.set_width(bear_sl_ln, style_sltp_width)
+                        bear_tp1_ln := line.new(x1=x1, y1=tp1s, x2=x2, y2=tp1s, xloc=xloc.bar_index, color=style_tp1_color, style=sltp_ls)
+                        line.set_width(bear_tp1_ln, style_sltp_width)
+                        bear_tp2_ln := line.new(x1=x1, y1=tp2s, x2=x2, y2=tp2s, xloc=xloc.bar_index, color=style_tp2_color, style=sltp_ls)
+                        line.set_width(bear_tp2_ln, style_sltp_width)
+
+                        bear_entry_lbl := label.new(x=x2, y=es, text="ENTRY " + str.tostring(es, "#.##"), xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.blue, 85), textcolor=style_entry_color, size=sltp_lbl_sz)
+                        bear_sl_lbl := label.new(x=x2, y=ss, text="SL " + str.tostring(ss, "#.##"), xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.red, 85), textcolor=style_sl_color, size=sltp_lbl_sz)
+                        bear_tp1_lbl := label.new(x=x2, y=tp1s, text="TP1 " + str.tostring(tp1s, "#.##") + " [" + str.tostring(rrTP1, "#.#") + "R]", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.green, 85), textcolor=style_tp1_color, size=sltp_lbl_sz)
+                        bear_tp2_lbl := label.new(x2, y=tp2s, text="TP2 " + str.tostring(tp2s, "#.##") + " [" + str.tostring(rrTP2, "#.#") + "R]", xloc=xloc.bar_index, style=label.style_label_left, color=color.new(color.green, 85), textcolor=style_tp2_color, size=sltp_lbl_sz)
+
+                        dash_last_smt := "BEAR ✓"
+                        dash_entry_val := es
+                        dash_sl_val := ss
+                        dash_tp1_val := tp1s
+                        dash_tp2_val := tp2s
+                        dash_count := otp.smt_count
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 16: ÇOKLU FİBONACCİ ÇİZİM MOTORU (HİBRİT)
+// ═══════════════════════════════════════════════════════════
+var array<line> fib_lines = array.new<line>()
+var array<label> fib_labels = array.new<label>()
+var array<linefill> fib_fills = array.new<linefill>()
+var array<float> fib_ret_levels = array.from(0.0, 0.236, 0.382, 0.5, 0.618, 0.705, 0.786, 0.886, 1.0)
+var array<float> fib_ext_levels = array.from(-0.236, -0.5, -0.618, -1.0, -1.5, -2.0, -2.5, -4.0)
+
+f_draw_fib(_t1, _p1, _t2, _p2) =>
+    float r = math.abs(_p1 - _p2)
+    int st_t = int(math.min(_t1, _t2))
+    bool is_up = (_t1 < _t2 and _p1 < _p2) or (_t1 > _t2 and _p1 > _p2)
+    bool dir_up = fibReverse ? not is_up : is_up
+    float high_p = math.max(_p1, _p2)
+    float low_p = math.min(_p1, _p2)
+    int cur_t = int(time)
+    int en_t = int(math.max(_t1, _t2))
+    int cur_b = bar_index
+
+    // Yön rengi hesaplama
+    color dir_clr = fibUseDirColor ? (dir_up ? fibBullColor : fibBearColor) : na
+
+    if fibShowTrend
+        color tr_clr = fibUseDirColor ? color.new(dir_clr, 40) : color.new(fibTrendColor, 40)
+        line ln_tr = line.new(x1=int(_t1), y1=_p1, x2=int(_t2), y2=_p2, xloc=xloc.bar_time, color=tr_clr, style=line.style_dashed)
+        line.set_width(ln_tr, 1)
+        array.push(fib_lines, ln_tr)
+    if fibShowCoord
+        color coord_clr = fibUseDirColor ? dir_clr : (is_up ? style_fib_premium : style_fib_discount)
+        array.push(fib_labels, label.new(x=int(_t2), y=_p2, text=str.tostring(_p2, "#.##"), xloc=xloc.bar_time, style=is_up?label.style_label_down:label.style_label_up, color=color.new(coord_clr, 80), textcolor=coord_clr, size=fib_lbl_sz))
+        array.push(fib_labels, label.new(x=int(_t1), y=_p1, text=str.tostring(_p1, "#.##"), xloc=xloc.bar_time, style=is_up?label.style_label_up:label.style_label_down, color=color.new(coord_clr, 80), textcolor=coord_clr, size=fib_lbl_sz))
+
+    // Etiket pozisyon hesaplama
+    int lbl_x = fibLabelSide == "Sağ" ? cur_b + 5 : fibLabelSide == "Sol" ? math.max(0, cur_b - 200) : cur_b
+    string lbl_ha = fibLabelSide == "Sağ" ? text.align_left : fibLabelSide == "Sol" ? text.align_right : text.align_center
+
+    // Önceki seviye çizgisini saklama (background fill için)
+    line prev_ln = na
+
+    for i = 0 to array.size(fib_ret_levels) - 1
+        float lvl = array.get(fib_ret_levels, i)
+        float prc = dir_up ? (high_p - lvl * r) : (low_p + lvl * r)
+        
+        // Renk hesaplama
+        color clr = na
+        if fibUseDirColor
+            clr := dir_clr
+        else
+            clr := style_fib_eq
+            if lvl == 0.0 or lvl == 1.0
+                clr := style_fib_boundary
+            else if lvl == 0.5
+                clr := style_fib_eq
+            else if lvl >= 0.618
+                clr := dir_up ? style_fib_discount : style_fib_premium
+            else if lvl <= 0.382
+                clr := dir_up ? style_fib_premium : style_fib_discount
+        
+        color f_clr = color.new(clr, style_fib_alpha)
+        
+        line ln_ret = line.new(x1=st_t, y1=prc, x2=en_t, y2=prc, xloc=xloc.bar_time, extend=fib_ext_mode, color=f_clr, style=fib_ls)
+        int lw = (lvl == 0.0 or lvl == 0.5 or lvl == 0.618 or lvl == 0.786 or lvl == 1.0) ? 2 : 1
+        line.set_width(ln_ret, lw)
+        array.push(fib_lines, ln_ret)
+
+        // Background fill
+        if fibShowBg and not na(prev_ln)
+            color bg_clr = color.new(nz(clr, color.gray), fibBgAlpha)
+            linefill lf = linefill.new(prev_ln, ln_ret, bg_clr)
+            array.push(fib_fills, lf)
+        prev_ln := ln_ret
+        
+        // Etiket metni oluşturma
+        string txt = ""
+        if fibLevelDisplay == "Değer"
+            txt := str.tostring(lvl, "#.###")
+        else if fibLevelDisplay == "Yüzde"
+            txt := str.tostring(lvl * 100, "#.#") + "%"
+        else
+            txt := str.tostring(lvl, "#.###") + " (" + str.tostring(lvl * 100, "#.#") + "%)"
+        if fibShowPrice
+            txt += "  " + str.tostring(prc, "#.##")
+        array.push(fib_labels, label.new(x=lbl_x, y=prc, text=txt, xloc=xloc.bar_index, style=label.style_none, color=color.new(color.black, 100), textcolor=f_clr, size=fib_lbl_sz, textalign=lbl_ha))
+
+    if fibShowExt
+        for i = 0 to array.size(fib_ext_levels) - 1
+            float lvl = array.get(fib_ext_levels, i)
+            float prc = dir_up ? (high_p - lvl * r) : (low_p + lvl * r)
+            color ext_clr = fibUseDirColor ? color.new(dir_clr, math.min(100, style_fib_alpha + 15)) : color.new(style_fib_ext, style_fib_alpha)
+            
+            line ln_ext = line.new(x1=st_t, y1=prc, x2=en_t, y2=prc, xloc=xloc.bar_time, extend=fib_ext_mode, color=ext_clr, style=line.style_dashed)
+            line.set_width(ln_ext, 1)
+            array.push(fib_lines, ln_ext)
+            
+            string txt = ""
+            if fibLevelDisplay == "Değer"
+                txt := str.tostring(lvl, "#.###")
+            else if fibLevelDisplay == "Yüzde"
+                txt := str.tostring(lvl * 100, "#.#") + "%"
+            else
+                txt := str.tostring(lvl, "#.###") + " (" + str.tostring(lvl * 100, "#.#") + "%)"
+            if fibShowPrice
+                txt += "  " + str.tostring(prc, "#.##")
+            array.push(fib_labels, label.new(x=lbl_x, y=prc, text=txt, xloc=xloc.bar_index, style=label.style_none, color=color.new(color.black, 100), textcolor=ext_clr, size=fib_lbl_sz, textalign=lbl_ha))
+
+
+if barstate.islast
+    while array.size(fib_fills) > 0
+        linefill.delete(array.pop(fib_fills))
+    while array.size(fib_lines) > 0
+        line.delete(array.pop(fib_lines))
+    while array.size(fib_labels) > 0
+        label.delete(array.pop(fib_labels))
+
+    // MANUEL FIB ÇİZİMLERİ
+    // MANUEL FIBONACCİ ÇİZİMLERİ
+    if fibMan1Show and fm1_t1 != 0 and fm1_t2 != 0
+        f_draw_fib(fm1_t1, fm1_p1, fm1_t2, fm1_p2)
+    if fibMan2Show and fm2_t1 != 0 and fm2_t2 != 0
+        f_draw_fib(fm2_t1, fm2_p1, fm2_t2, fm2_p2)
+    if fibMan3Show and fm3_t1 != 0 and fm3_t2 != 0
+        f_draw_fib(fm3_t1, fm3_p1, fm3_t2, fm3_p2)
+
+    // OTOMATİK FIB ÇİZİMLERİ (Her TF İçin Sabit 2 Fib: Canlı Makro + Kırılan Makro)
+    if fibAutoMainShow
+        if not na(f3_l_t) and not na(f3_l_b)
+            f_draw_fib(f3_l_bt, f3_l_b, f3_l_tt, f3_l_t)
+        if fibShowBroken and not na(f3_b_t) and not na(f3_b_b)
+            f_draw_fib(f3_b_bt, f3_b_b, f3_b_tt, f3_b_t)
+    if fibAutoSubShow
+        if not na(f2_l_t) and not na(f2_l_b)
+            f_draw_fib(f2_l_bt, f2_l_b, f2_l_tt, f2_l_t)
+        if fibShowBroken and not na(f2_b_t) and not na(f2_b_b)
+            f_draw_fib(f2_b_bt, f2_b_b, f2_b_tt, f2_b_t)
+    if fibAuto1mShow
+        if not na(f1_l_t) and not na(f1_l_b)
+            f_draw_fib(f1_l_bt, f1_l_b, f1_l_tt, f1_l_t)
+        if fibShowBroken and not na(f1_b_t) and not na(f1_b_b)
+            f_draw_fib(f1_b_bt, f1_b_b, f1_b_tt, f1_b_t)
+
+    // QML Çizimleri yukarıda QMLZone state management ile halledildi.
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 17: DASHBOARD
+// ═══════════════════════════════════════════════════════════
+var table_position = switch dashPos
+    "Sol Üst" => position.top_left
+    "Sağ Üst" => position.top_right
+    "Sol Alt" => position.bottom_left
+    => position.bottom_right
+
+var table dash_tbl = table.new(table_position, 2, 20, bgcolor=color.new(color.black, dashBgAlpha), frame_color=color.new(color.gray, 60), frame_width=1, border_color=color.new(color.gray, 70), border_width=1)
+
+if showDash and barstate.islast
+    string dts = dash_text_size
+    int row = 0
+
+    table.cell(dash_tbl, 0, row, "ALFA SMT v6.4", text_color=style_dash_title, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, "🎯", text_size=dts)
+    row += 1
+
+    color cm = ms_main_bias == 1 ? style_dash_positive : ms_main_bias == -1 ? style_dash_negative : style_dash_neutral
+    table.cell(dash_tbl, 0, row, msTF_main + " Trend", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, ms_main_bias == 1 ? "BULLISH ▲" : ms_main_bias == -1 ? "BEARISH ▼" : "---", text_color=cm, text_size=dts)
+    row += 1
+
+    color cs = ms_sub_bias == 1 ? style_dash_positive : ms_sub_bias == -1 ? style_dash_negative : style_dash_neutral
+    table.cell(dash_tbl, 0, row, msTF_sub + " Trend", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, ms_sub_bias == 1 ? "BULLISH ▲" : ms_sub_bias == -1 ? "BEARISH ▼" : "---", text_color=cs, text_size=dts)
+    row += 1
+
+    color c1t = ms1_bias == 1 ? style_dash_positive : ms1_bias == -1 ? style_dash_negative : style_dash_neutral
+    table.cell(dash_tbl, 0, row, msTF_minor + " Trend", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, ms1_bias == 1 ? "BULLISH ▲" : ms1_bias == -1 ? "BEARISH ▼" : "---", text_color=c1t, text_size=dts)
+    row += 1
+
+    color sc = str.contains(dash_last_smt, "BULL") ? style_dash_positive : str.contains(dash_last_smt, "BEAR") ? style_dash_negative : style_dash_neutral
+    table.cell(dash_tbl, 0, row, "Son SMT", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, dash_last_smt + " (" + str.tostring(dash_count) + "/" + str.tostring(totalActive) + ")", text_color=sc, text_size=dts)
+    row += 1
+
+    table.cell(dash_tbl, 0, row, "Entry", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, na(dash_entry_val) ? "---" : str.tostring(dash_entry_val, "#.##"), text_color=style_entry_color, text_size=dts)
+    row += 1
+
+    table.cell(dash_tbl, 0, row, "Stop Loss", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, na(dash_sl_val) ? "---" : str.tostring(dash_sl_val, "#.##"), text_color=style_sl_color, text_size=dts)
+    row += 1
+
+    table.cell(dash_tbl, 0, row, "TP1 (" + str.tostring(rrTP1, "#.#") + "R)", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, na(dash_tp1_val) ? "---" : str.tostring(dash_tp1_val, "#.##"), text_color=style_tp1_color, text_size=dts)
+    row += 1
+
+    table.cell(dash_tbl, 0, row, "TP2 (" + str.tostring(rrTP2, "#.#") + "R)", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    table.cell(dash_tbl, 1, row, na(dash_tp2_val) ? "---" : str.tostring(dash_tp2_val, "#.##"), text_color=style_tp2_color, text_size=dts)
+    row += 1
+
+    table.cell(dash_tbl, 0, row, "RSI (" + str.tostring(rsiLen) + ")", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    color rsi_clr = rsi_val > 70 ? style_dash_negative : rsi_val < 30 ? style_dash_positive : style_dash_neutral
+    table.cell(dash_tbl, 1, row, str.tostring(rsi_val, "#.#") + (rsi_bull_age <= 15 ? " DIV↑" : rsi_bear_age <= 15 ? " DIV↓" : ""), text_color=rsi_clr, text_size=dts)
+    row += 1
+
+    table.cell(dash_tbl, 0, row, "AO", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+    color ao_clr = ao_val > 0 ? style_dash_positive : style_dash_negative
+    table.cell(dash_tbl, 1, row, str.tostring(ao_val, "#.##") + (ao_val > ao_val[1] ? " ▲" : " ▼"), text_color=ao_clr, text_size=dts)
+    row += 1
+
+    if not na(fib_pos)
+        string fib_zone = fib_pos > 0.618 ? "PREMIUM" : fib_pos < 0.382 ? "DISCOUNT" : "EQ"
+        color fib_clr = fib_pos > 0.618 ? style_fib_premium : fib_pos < 0.382 ? style_fib_discount : style_fib_eq
+        table.cell(dash_tbl, 0, row, "Aktif Fib Zone", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+        table.cell(dash_tbl, 1, row, fib_zone + " (" + str.tostring(fib_pos, "#.##") + ")", text_color=fib_clr, text_size=dts)
+        row += 1
+
+    if sessionFilter != "Kapalı"
+        color sess_clr = sess_ok ? style_dash_positive : style_dash_negative
+        table.cell(dash_tbl, 0, row, "Seans", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+        table.cell(dash_tbl, 1, row, sess_ok ? "AKTİF ✓" : "DIŞINDA ✗", text_color=sess_clr, text_size=dts)
+        row += 1
+
+    if showBacktest
+        table.cell(dash_tbl, 0, row, "═══ BACKTEST ═══", text_color=style_dash_title, text_size=dts, text_halign=text.align_left)
+        table.cell(dash_tbl, 1, row, "", text_size=dts)
+        row += 1
+
+        table.cell(dash_tbl, 0, row, "Toplam", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+        table.cell(dash_tbl, 1, row, str.tostring(bt_total), text_color=style_dash_neutral, text_size=dts)
+        row += 1
+
+        float wr = bt_total > 0 ? bt_tp1 / bt_total * 100 : 0.0
+        color wrc = wr >= 50 ? style_dash_positive : style_dash_negative
+        table.cell(dash_tbl, 0, row, "Win Rate", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+        table.cell(dash_tbl, 1, row, str.tostring(wr, "#.#") + "% (" + str.tostring(bt_tp1) + "/" + str.tostring(bt_total) + ")", text_color=wrc, text_size=dts)
+        row += 1
+
+        float tp2r = bt_total > 0 ? bt_tp2 / bt_total * 100 : 0.0
+        table.cell(dash_tbl, 0, row, "TP2 Rate", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+        table.cell(dash_tbl, 1, row, str.tostring(tp2r, "#.#") + "% (" + str.tostring(bt_tp2) + ")", text_color=style_dash_positive, text_size=dts)
+        row += 1
+
+        table.cell(dash_tbl, 0, row, "SL / BE", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+        table.cell(dash_tbl, 1, row, str.tostring(bt_sl) + " / " + str.tostring(bt_be), text_color=style_dash_negative, text_size=dts)
+        row += 1
+
+        color nrc = bt_net_r >= 0 ? style_dash_positive : style_dash_negative
+        table.cell(dash_tbl, 0, row, "Net R", text_color=style_dash_label, text_size=dts, text_halign=text.align_left)
+        table.cell(dash_tbl, 1, row, (bt_net_r >= 0 ? "+" : "") + str.tostring(bt_net_r, "#.##") + "R", text_color=nrc, text_size=dts)
+
+// ═══════════════════════════════════════════════════════════
+// BÖLÜM 18: KESİN VE KUSURSUZ ALARMLAR
+// ═══════════════════════════════════════════════════════════
+
+string sz_str = alertSize
+string st_str = alertStyle
+
+// ─── BOĞA (AL) SİNYALLERİ ───
+// Üçgen Şekli
+plotshape(alert_bull_fire and st_str == "Üçgen" and sz_str == "tiny",   title="AL_Tri_T", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny)
+plotshape(alert_bull_fire and st_str == "Üçgen" and sz_str == "small",  title="AL_Tri_S", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(alert_bull_fire and st_str == "Üçgen" and sz_str == "normal", title="AL_Tri_N", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.normal)
+plotshape(alert_bull_fire and st_str == "Üçgen" and sz_str == "large",  title="AL_Tri_L", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.large)
+plotshape(alert_bull_fire and st_str == "Üçgen" and sz_str == "huge",   title="AL_Tri_H", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.huge)
+
+// Ok Şekli
+plotshape(alert_bull_fire and st_str == "Ok" and sz_str == "tiny",   title="AL_Arr_T", style=shape.arrowup, location=location.belowbar, color=color.new(color.green, 0), size=size.tiny)
+plotshape(alert_bull_fire and st_str == "Ok" and sz_str == "small",  title="AL_Arr_S", style=shape.arrowup, location=location.belowbar, color=color.new(color.green, 0), size=size.small)
+plotshape(alert_bull_fire and st_str == "Ok" and sz_str == "normal", title="AL_Arr_N", style=shape.arrowup, location=location.belowbar, color=color.new(color.green, 0), size=size.normal)
+plotshape(alert_bull_fire and st_str == "Ok" and sz_str == "large",  title="AL_Arr_L", style=shape.arrowup, location=location.belowbar, color=color.new(color.green, 0), size=size.large)
+plotshape(alert_bull_fire and st_str == "Ok" and sz_str == "huge",   title="AL_Arr_H", style=shape.arrowup, location=location.belowbar, color=color.new(color.green, 0), size=size.huge)
+
+// Etiket Şekli
+plotshape(alert_bull_fire and st_str == "Etiket" and sz_str == "tiny",   title="AL_Lbl_T", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="AL", size=size.tiny)
+plotshape(alert_bull_fire and st_str == "Etiket" and sz_str == "small",  title="AL_Lbl_S", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="AL", size=size.small)
+plotshape(alert_bull_fire and st_str == "Etiket" and sz_str == "normal", title="AL_Lbl_N", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="AL", size=size.normal)
+plotshape(alert_bull_fire and st_str == "Etiket" and sz_str == "large",  title="AL_Lbl_L", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="AL", size=size.large)
+plotshape(alert_bull_fire and st_str == "Etiket" and sz_str == "huge",   title="AL_Lbl_H", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.white, text="AL", size=size.huge)
+
+// ─── AYI (SAT) SİNYALLERİ ───
+// Üçgen Şekli
+plotshape(alert_bear_fire and st_str == "Üçgen" and sz_str == "tiny",   title="SAT_Tri_T", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny)
+plotshape(alert_bear_fire and st_str == "Üçgen" and sz_str == "small",  title="SAT_Tri_S", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.small)
+plotshape(alert_bear_fire and st_str == "Üçgen" and sz_str == "normal", title="SAT_Tri_N", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.normal)
+plotshape(alert_bear_fire and st_str == "Üçgen" and sz_str == "large",  title="SAT_Tri_L", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.large)
+plotshape(alert_bear_fire and st_str == "Üçgen" and sz_str == "huge",   title="SAT_Tri_H", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.huge)
+
+// Ok Şekli
+plotshape(alert_bear_fire and st_str == "Ok" and sz_str == "tiny",   title="SAT_Arr_T", style=shape.arrowdown, location=location.abovebar, color=color.new(color.red, 0), size=size.tiny)
+plotshape(alert_bear_fire and st_str == "Ok" and sz_str == "small",  title="SAT_Arr_S", style=shape.arrowdown, location=location.abovebar, color=color.new(color.red, 0), size=size.small)
+plotshape(alert_bear_fire and st_str == "Ok" and sz_str == "normal", title="SAT_Arr_N", style=shape.arrowdown, location=location.abovebar, color=color.new(color.red, 0), size=size.normal)
+plotshape(alert_bear_fire and st_str == "Ok" and sz_str == "large",  title="SAT_Arr_L", style=shape.arrowdown, location=location.abovebar, color=color.new(color.red, 0), size=size.large)
+plotshape(alert_bear_fire and st_str == "Ok" and sz_str == "huge",   title="SAT_Arr_H", style=shape.arrowdown, location=location.abovebar, color=color.new(color.red, 0), size=size.huge)
+
+// Etiket Şekli
+plotshape(alert_bear_fire and st_str == "Etiket" and sz_str == "tiny",   title="SAT_Lbl_T", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white, text="SAT", size=size.tiny)
+plotshape(alert_bear_fire and st_str == "Etiket" and sz_str == "small",  title="SAT_Lbl_S", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white, text="SAT", size=size.small)
+plotshape(alert_bear_fire and st_str == "Etiket" and sz_str == "normal", title="SAT_Lbl_N", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white, text="SAT", size=size.normal)
+plotshape(alert_bear_fire and st_str == "Etiket" and sz_str == "large",  title="SAT_Lbl_L", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white, text="SAT", size=size.large)
+plotshape(alert_bear_fire and st_str == "Etiket" and sz_str == "huge",   title="SAT_Lbl_H", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.white, text="SAT", size=size.huge)
+
+var int last_bull_alert_time = 0
+var int last_bear_alert_time = 0
+
+if alert_bull_fire and time > last_bull_alert_time
+    string bull_msg = '{"passphrase": "alfa", "action": "buy", "symbol": "XAUUSD", "sl": ' + str.tostring(alert_sl) + ', "tp": ' + str.tostring(alert_tp) + '}'
+    alert(bull_msg, alert.freq_all)
+    last_bull_alert_time := time
+
+if alert_bear_fire and time > last_bear_alert_time
+    string bear_msg = '{"passphrase": "alfa", "action": "sell", "symbol": "XAUUSD", "sl": ' + str.tostring(alert_sl) + ', "tp": ' + str.tostring(alert_tp) + '}'
+    alert(bear_msg, alert.freq_all)
+    last_bear_alert_time := time
